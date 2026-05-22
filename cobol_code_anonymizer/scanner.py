@@ -1,0 +1,661 @@
+"""PII scanning helpers for COBOL, copybooks, and JCL."""
+
+from __future__ import annotations
+
+import json
+import re
+from dataclasses import asdict, dataclass
+from pathlib import Path
+
+
+TEXT_EXTENSIONS = {
+    ".cbl",
+    ".cob",
+    ".cobol",
+    ".cpy",
+    ".jcl",
+    ".proc",
+    ".txt",
+    ".csv",
+    ".json",
+    ".xml",
+    ".md",
+    ".log",
+    ".sql",
+    ".dat",
+    ".ctl",
+}
+
+DEFAULT_ENTITIES = {
+    "NAME",
+    "IBAN",
+    "EMAIL",
+    "CODICE_FISCALE",
+    "MATRICOLA",
+    "PHONE",
+}
+
+EMAIL_RE = re.compile(r"\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b", re.IGNORECASE)
+IBAN_RE = re.compile(r"\b[A-Z]{2}\d{2}[A-Z0-9]{11,30}\b", re.IGNORECASE)
+CODICE_FISCALE_RE = re.compile(
+    r"\b[A-Z]{6}\d{2}[A-Z]\d{2}[A-Z]\d{3}[A-Z]\b",
+    re.IGNORECASE,
+)
+
+MATRICOLA_LABELS = (
+    "MATRICOLA",
+    "MATR",
+    "CODDIP",
+    "COD-DIP",
+    "CODICE-DIP",
+    "CODICE-DIPENDENTE",
+    "DIPENDENTE",
+    "EMPLOYEE-ID",
+    "EMP-ID",
+)
+MATRICOLA_STOP_VALUES = {
+    "COMP",
+    "DISPLAY",
+    "HIGH-VALUES",
+    "LOW-VALUES",
+    "PIC",
+    "PICTURE",
+    "SPACE",
+    "SPACES",
+    "TO",
+    "VALUE",
+    "ZERO",
+    "ZEROES",
+    "ZEROS",
+}
+
+MATRICOLA_VALUE = r"[A-Z0-9][A-Z0-9./-]{2,30}"
+MATRICOLA_MOVE_RE = re.compile(
+    rf"\bMOVE\s+['\"]?(?P<value>{MATRICOLA_VALUE})['\"]?\s+TO\s+"
+    rf"[\w-]*(?:{'|'.join(re.escape(label) for label in MATRICOLA_LABELS)})[\w-]*\b",
+    re.IGNORECASE,
+)
+MATRICOLA_FIELD_VALUE_RE = re.compile(
+    rf"\b[\w-]*(?:{'|'.join(re.escape(label) for label in MATRICOLA_LABELS)})[\w-]*\b"
+    rf"[^\r\n]{{0,90}}\bVALUE\s+['\"]?(?P<value>{MATRICOLA_VALUE})['\"]?",
+    re.IGNORECASE,
+)
+MATRICOLA_KEY_VALUE_RE = re.compile(
+    rf"\b(?:{'|'.join(re.escape(label) for label in MATRICOLA_LABELS)})\b"
+    rf"\s*[:=]\s*['\"]?(?P<value>{MATRICOLA_VALUE})['\"]?",
+    re.IGNORECASE,
+)
+
+PHONE_LABEL_RE = re.compile(
+    r"\b(?:TEL|TELEFONO|PHONE|CELL|CELLULARE)\b\s*[:=]?\s*"
+    r"(?P<value>\+?\d[\d .()/-]{6,20}\d)",
+    re.IGNORECASE,
+)
+
+NAME_STOPWORDS = {
+    "AUTHOR",
+    "CELL",
+    "CELLULARE",
+    "CODICE",
+    "COGNOME",
+    "COMMENTO",
+    "EMAIL",
+    "FISCALE",
+    "IBAN",
+    "MAIL",
+    "MATRICOLA",
+    "NOME",
+    "NOMINATIVO",
+    "OPERATORE",
+    "REFERENTE",
+    "RESPONSABILE",
+    "TEL",
+    "TELEFONO",
+    "TEST",
+}
+
+
+@dataclass(frozen=True)
+class Finding:
+    file: str
+    entity_type: str
+    text: str
+    start: int
+    end: int
+    line: int
+    column: int
+    confidence: float
+    context: str
+    source: str = ""
+
+    def to_dict(self) -> dict[str, object]:
+        data = asdict(self)
+        data.pop("start")
+        data.pop("end")
+        return data
+
+
+def read_text(path: Path) -> str:
+    try:
+        return path.read_text(encoding="utf-8")
+    except UnicodeDecodeError:
+        return path.read_text(encoding="latin-1")
+
+
+def write_json(path: Path, findings: list[Finding]) -> None:
+    path.write_text(
+        json.dumps([finding.to_dict() for finding in findings], indent=2, ensure_ascii=False),
+        encoding="utf-8",
+    )
+
+
+def iter_text_files(input_path: Path, skip_root: Path | None = None) -> list[Path]:
+    if input_path.is_file():
+        return [input_path] if is_text_candidate(input_path) else []
+    files: list[Path] = []
+    for path in input_path.rglob("*"):
+        if skip_root and is_relative_to(path, skip_root):
+            continue
+        if path.is_file() and is_text_candidate(path):
+            files.append(path)
+    return files
+
+
+def iter_all_files(input_path: Path, skip_root: Path | None = None) -> list[Path]:
+    if input_path.is_file():
+        return [input_path]
+    files: list[Path] = []
+    for path in input_path.rglob("*"):
+        if skip_root and is_relative_to(path, skip_root):
+            continue
+        if path.is_file():
+            files.append(path)
+    return files
+
+
+def is_text_candidate(path: Path) -> bool:
+    return path.suffix.lower() in TEXT_EXTENSIONS or not path.suffix
+
+
+def is_relative_to(path: Path, root: Path) -> bool:
+    try:
+        path.resolve().relative_to(root.resolve())
+        return True
+    except ValueError:
+        return False
+
+
+def relative_name(path: Path, input_path: Path) -> str:
+    if input_path.is_file():
+        return path.name
+    return str(path.relative_to(input_path))
+
+
+def line_column(text: str, offset: int) -> tuple[int, int]:
+    line = text.count("\n", 0, offset) + 1
+    last_newline = text.rfind("\n", 0, offset)
+    column = offset + 1 if last_newline == -1 else offset - last_newline
+    return line, column
+
+
+def context_for(text: str, start: int, end: int, radius: int = 75) -> str:
+    prefix_start = max(0, start - radius)
+    suffix_end = min(len(text), end + radius)
+    return text[prefix_start:start] + "[[" + text[start:end] + "]]" + text[end:suffix_end]
+
+
+def trim_span(text: str, start: int, end: int) -> tuple[int, int]:
+    while start < end and text[start].isspace():
+        start += 1
+    while end > start and text[end - 1].isspace():
+        end -= 1
+    return start, end
+
+
+def load_names(extra_watchlists: list[Path] | None = None) -> list[str]:
+    names_path = Path(__file__).parent / "data" / "italian_names.txt"
+    paths = [names_path] + list(extra_watchlists or [])
+    names: set[str] = set()
+    for path in paths:
+        if not path.exists():
+            continue
+        for line in read_text(path).splitlines():
+            value = " ".join(line.strip().split())
+            if value and not value.startswith("#"):
+                names.add(value)
+    return sorted(names, key=lambda value: (-len(value), value.upper()))
+
+
+def compile_name_regex(names: list[str]) -> re.Pattern[str] | None:
+    patterns = []
+    for name in names:
+        if len(name) < 3:
+            continue
+        escaped = re.escape(name).replace(r"\ ", r"\s+")
+        patterns.append(escaped)
+    if not patterns:
+        return None
+    return re.compile(rf"(?<![A-Z0-9_-])({'|'.join(patterns)})(?![A-Z0-9_-])", re.IGNORECASE)
+
+
+def name_scan_ranges(text: str, scope: str) -> list[tuple[int, int]]:
+    if scope == "all":
+        return [(0, len(text))]
+
+    ranges: list[tuple[int, int]] = []
+    offset = 0
+    for line in text.splitlines(keepends=True):
+        if is_name_context_line(line):
+            ranges.append((offset, offset + len(line)))
+        offset += len(line)
+
+    for match in re.finditer(r"'[^'\r\n]{2,160}'|\"[^\"\r\n]{2,160}\"", text):
+        ranges.append((match.start(), match.end()))
+
+    return merge_ranges(ranges)
+
+
+def is_name_context_line(line: str) -> bool:
+    stripped = line.strip()
+    upper = line.upper()
+    if not stripped:
+        return False
+    if stripped.startswith("*") or stripped.startswith("//*"):
+        return True
+    if len(line) > 6 and line[6] == "*":
+        return True
+    markers = (
+        " AUTHOR",
+        "DISPLAY ",
+        " VALUE ",
+        " STRING ",
+        " ASSIGN TO ",
+        " NOME",
+        "COGNOME",
+        "NOMINATIVO",
+        "REFERENTE",
+        "RESPONSABILE",
+        "OPERATORE",
+        "ANALISTA",
+        "CONTATTARE",
+    )
+    return any(marker in upper for marker in markers)
+
+
+def merge_ranges(ranges: list[tuple[int, int]]) -> list[tuple[int, int]]:
+    if not ranges:
+        return []
+    ordered = sorted(ranges)
+    merged = [ordered[0]]
+    for start, end in ordered[1:]:
+        last_start, last_end = merged[-1]
+        if start <= last_end:
+            merged[-1] = (last_start, max(last_end, end))
+        else:
+            merged.append((start, end))
+    return merged
+
+
+def offset_in_ranges(start: int, end: int, ranges: list[tuple[int, int]]) -> bool:
+    return any(start >= range_start and end <= range_end for range_start, range_end in ranges)
+
+
+def is_inside_email_or_url(text: str, start: int, end: int) -> bool:
+    token_start = start
+    while token_start > 0 and not text[token_start - 1].isspace() and text[token_start - 1] not in "\"'<>(),;":
+        token_start -= 1
+    token_end = end
+    while token_end < len(text) and not text[token_end].isspace() and text[token_end] not in "\"'<>(),;":
+        token_end += 1
+    token = text[token_start:token_end]
+    return "@" in token or "://" in token
+
+
+def trim_name_stopwords(text: str, start: int, end: int) -> tuple[int, int]:
+    while True:
+        value = text[start:end].strip()
+        if not value:
+            return start, start
+        words = value.split()
+        first = words[0].strip(":,.;").upper()
+        last = words[-1].strip(":,.;").upper()
+        changed = False
+        if first in NAME_STOPWORDS:
+            start = text.find(words[0], start, end) + len(words[0])
+            changed = True
+        if last in NAME_STOPWORDS and start < end:
+            end = text.rfind(words[-1], start, end)
+            changed = True
+        start, end = trim_span(text, start, end)
+        if not changed:
+            return start, end
+
+
+def build_presidio_analyzer(model_name: str, diagnostics: list[str]) -> object | None:
+    try:
+        from presidio_analyzer import AnalyzerEngine
+        from presidio_analyzer.nlp_engine import NlpEngineProvider
+    except ImportError as exc:
+        diagnostics.append(
+            "Microsoft Presidio/spaCy are not installed; falling back to the bundled watchlist. "
+            "Install with: python -m pip install -e . && python -m spacy download it_core_news_sm"
+        )
+        diagnostics.append(f"Import error: {exc}")
+        return None
+
+    try:
+        nlp_config = {
+            "nlp_engine_name": "spacy",
+            "models": [{"lang_code": "it", "model_name": model_name}],
+        }
+        nlp_engine = NlpEngineProvider(nlp_configuration=nlp_config).create_engine()
+        return AnalyzerEngine(nlp_engine=nlp_engine, supported_languages=["it"])
+    except Exception as exc:
+        diagnostics.append(
+            f"Could not start Presidio with spaCy model {model_name!r}; "
+            "falling back to the bundled watchlist."
+        )
+        diagnostics.append(f"Presidio error: {exc}")
+        return None
+
+
+def scan_path(
+    input_path: Path,
+    entities: set[str] | None = None,
+    extra_watchlists: list[Path] | None = None,
+    name_scope: str = "context",
+    skip_root: Path | None = None,
+    use_presidio: bool = True,
+    presidio_model: str = "it_core_news_sm",
+    diagnostics: list[str] | None = None,
+) -> list[Finding]:
+    selected = entities or DEFAULT_ENTITIES
+    diag = diagnostics if diagnostics is not None else []
+    names = load_names(extra_watchlists)
+    name_regex = compile_name_regex(names) if "NAME" in selected else None
+    presidio_analyzer = (
+        build_presidio_analyzer(presidio_model, diag)
+        if use_presidio and "NAME" in selected
+        else None
+    )
+    findings: list[Finding] = []
+    for path in iter_text_files(input_path, skip_root=skip_root):
+        findings.extend(
+            scan_file(
+                path,
+                input_path,
+                selected,
+                name_regex,
+                name_scope,
+                presidio_analyzer=presidio_analyzer,
+            )
+        )
+    return remove_overlaps(findings)
+
+
+def scan_file(
+    path: Path,
+    input_path: Path,
+    entities: set[str],
+    name_regex: re.Pattern[str] | None,
+    name_scope: str,
+    presidio_analyzer: object | None = None,
+) -> list[Finding]:
+    text = read_text(path)
+    rel_file = relative_name(path, input_path)
+    findings: list[Finding] = []
+
+    if "EMAIL" in entities:
+        findings.extend(regex_findings(text, rel_file, "EMAIL", EMAIL_RE, 0.98))
+    if "IBAN" in entities:
+        findings.extend(regex_findings(text, rel_file, "IBAN", IBAN_RE, 0.96))
+    if "CODICE_FISCALE" in entities:
+        findings.extend(regex_findings(text, rel_file, "CODICE_FISCALE", CODICE_FISCALE_RE, 0.96))
+    if "MATRICOLA" in entities:
+        findings.extend(scan_matricola(text, rel_file))
+    if "PHONE" in entities:
+        findings.extend(regex_findings(text, rel_file, "PHONE", PHONE_LABEL_RE, 0.78, group="value"))
+    if "NAME" in entities:
+        name_findings: list[Finding] = []
+        if presidio_analyzer:
+            name_findings.extend(scan_presidio_names(text, rel_file, presidio_analyzer, name_scope))
+        if name_regex:
+            name_findings.extend(scan_watchlist_names(text, rel_file, name_regex, name_scope))
+        findings.extend(remove_overlaps(name_findings))
+
+    return findings
+
+
+def regex_findings(
+    text: str,
+    rel_file: str,
+    entity_type: str,
+    regex: re.Pattern[str],
+    confidence: float,
+    group: str | None = None,
+) -> list[Finding]:
+    findings: list[Finding] = []
+    for match in regex.finditer(text):
+        start = match.start(group) if group else match.start()
+        end = match.end(group) if group else match.end()
+        value = text[start:end].strip()
+        if not value:
+            continue
+        line, column = line_column(text, start)
+        findings.append(
+            Finding(
+                file=rel_file,
+                entity_type=entity_type,
+                text=value,
+                start=start,
+                end=end,
+                line=line,
+                column=column,
+                confidence=confidence,
+                context=context_for(text, start, end),
+                source="regex",
+            )
+        )
+    return findings
+
+
+def scan_matricola(text: str, rel_file: str) -> list[Finding]:
+    findings: list[Finding] = []
+    for regex in (MATRICOLA_MOVE_RE, MATRICOLA_FIELD_VALUE_RE, MATRICOLA_KEY_VALUE_RE):
+        findings.extend(regex_findings(text, rel_file, "MATRICOLA", regex, 0.84, group="value"))
+    return [finding for finding in findings if is_probable_matricola_value(finding.text)]
+
+
+def is_probable_matricola_value(value: str) -> bool:
+    cleaned = value.strip().strip("\"'")
+    upper = cleaned.upper()
+    if upper in MATRICOLA_STOP_VALUES:
+        return False
+    if len(cleaned) < 3:
+        return False
+    return any(char.isdigit() for char in cleaned)
+
+
+def scan_presidio_names(
+    text: str,
+    rel_file: str,
+    analyzer: object,
+    scope: str,
+) -> list[Finding]:
+    findings: list[Finding] = []
+    ranges = name_scan_ranges(text, scope)
+    try:
+        results = analyzer.analyze(text=text, language="it", entities=["PERSON"])
+    except Exception:
+        return []
+    for result in results:
+        start, end = trim_span(text, result.start, result.end)
+        start, end = trim_name_stopwords(text, start, end)
+        if (
+            start >= end
+            or not offset_in_ranges(start, end, ranges)
+            or is_inside_email_or_url(text, start, end)
+        ):
+            continue
+        value = text[start:end]
+        if is_probable_name_false_positive(value):
+            continue
+        line, column = line_column(text, start)
+        findings.append(
+            Finding(
+                file=rel_file,
+                entity_type="NAME",
+                text=value,
+                start=start,
+                end=end,
+                line=line,
+                column=column,
+                confidence=float(result.score),
+                context=context_for(text, start, end),
+                source="presidio_spacy",
+            )
+        )
+    return findings
+
+
+def is_probable_name_false_positive(value: str) -> bool:
+    normalized = " ".join(value.replace("\r", " ").replace("\n", " ").split())
+    if not normalized:
+        return True
+    if any(char.isdigit() for char in normalized):
+        return True
+    if any(char in normalized for char in ("=", "'", '"')):
+        return True
+    if "-" in normalized:
+        return True
+    words = normalized.upper().split()
+    if len(words) == 1 and normalized.isupper():
+        return True
+    technical_words = {
+        "CALL",
+        "COMP",
+        "DISPLAY",
+        "DIVISION",
+        "ELSE",
+        "END",
+        "IF",
+        "MOVE",
+        "PERFORM",
+        "PIC",
+        "SECTION",
+        "THEN",
+        "TO",
+        "USING",
+        "VALUE",
+        "WHEN",
+        *NAME_STOPWORDS,
+    }
+    return any(word in technical_words for word in words)
+
+
+def scan_watchlist_names(
+    text: str,
+    rel_file: str,
+    name_regex: re.Pattern[str],
+    scope: str,
+) -> list[Finding]:
+    raw: list[Finding] = []
+    for start_range, end_range in name_scan_ranges(text, scope):
+        segment = text[start_range:end_range]
+        for match in name_regex.finditer(segment):
+            start = start_range + match.start()
+            end = start_range + match.end()
+            if is_inside_email_or_url(text, start, end):
+                continue
+            value = text[start:end]
+            line, column = line_column(text, start)
+            raw.append(
+                Finding(
+                    file=rel_file,
+                    entity_type="NAME",
+                    text=value,
+                    start=start,
+                    end=end,
+                    line=line,
+                    column=column,
+                    confidence=0.7,
+                    context=context_for(text, start, end),
+                    source="watchlist",
+                )
+            )
+    raw = remove_overlaps(raw)
+    return merge_adjacent_names(text, raw)
+
+
+def merge_adjacent_names(text: str, findings: list[Finding]) -> list[Finding]:
+    merged: list[Finding] = []
+    pending: Finding | None = None
+    for finding in sorted(findings, key=lambda item: (item.file, item.start, item.end)):
+        if pending is None:
+            pending = finding
+            continue
+        gap = text[pending.end : finding.start]
+        same_file = pending.file == finding.file
+        same_line = pending.line == finding.line
+        if same_file and same_line and gap and gap.strip() == "":
+            start, end = pending.start, finding.end
+            line, column = line_column(text, start)
+            pending = Finding(
+                file=pending.file,
+                entity_type="NAME",
+                text=text[start:end],
+                start=start,
+                end=end,
+                line=line,
+                column=column,
+                confidence=max(pending.confidence, finding.confidence),
+                context=context_for(text, start, end),
+                source=pending.source if pending.source == finding.source else "mixed",
+            )
+        else:
+            merged.append(pending)
+            pending = finding
+    if pending is not None:
+        merged.append(pending)
+    return merged
+
+
+def remove_overlaps(findings: list[Finding]) -> list[Finding]:
+    priority = {
+        "CODICE_FISCALE": 100,
+        "IBAN": 95,
+        "EMAIL": 90,
+        "MATRICOLA": 80,
+        "PHONE": 75,
+        "NAME": 60,
+    }
+    ordered = sorted(
+        findings,
+        key=lambda item: (
+            item.file,
+            item.start,
+            -priority.get(item.entity_type, 0),
+            -(item.end - item.start),
+        ),
+    )
+    kept: list[Finding] = []
+    for finding in ordered:
+        overlaps = [
+            existing
+            for existing in kept
+            if existing.file == finding.file
+            and not (finding.end <= existing.start or finding.start >= existing.end)
+        ]
+        if not overlaps:
+            kept.append(finding)
+            continue
+        best = max(
+            overlaps,
+            key=lambda item: (priority.get(item.entity_type, 0), item.end - item.start),
+        )
+        finding_rank = (priority.get(finding.entity_type, 0), finding.end - finding.start)
+        best_rank = (priority.get(best.entity_type, 0), best.end - best.start)
+        if finding_rank > best_rank:
+            kept = [item for item in kept if item not in overlaps]
+            kept.append(finding)
+    return sorted(kept, key=lambda item: (item.file, item.start, item.end))
