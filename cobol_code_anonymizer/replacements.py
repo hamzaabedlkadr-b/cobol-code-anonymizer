@@ -10,7 +10,7 @@ from pathlib import Path
 
 from .scanner import Finding, iter_all_files, is_text_candidate, read_text, relative_name
 
-NON_LINKABLE_ENTITIES = {"NAME", "MATRICOLA"}
+NON_LINKABLE_ENTITIES = {"NAME", "MATRICOLA", "SUSPECTED_MATRICOLA"}
 
 
 @dataclass
@@ -67,6 +67,7 @@ def entity_sort_order(entity_type: str) -> int:
     order = {
         "NAME": 10,
         "MATRICOLA": 20,
+        "SUSPECTED_MATRICOLA": 21,
         "IBAN": 30,
         "CODICE_FISCALE": 40,
         "EMAIL": 50,
@@ -179,7 +180,7 @@ def suggested_replacement(group: ValueGroup, index: int, salt: str) -> str:
     if group.entity_type == "PHONE":
         digits = "".join(char for char in original if char.isdigit())
         return "0" * max(len(digits), 8)
-    if group.entity_type == "MATRICOLA":
+    if group.entity_type in {"MATRICOLA", "SUSPECTED_MATRICOLA"}:
         compact = "".join(char for char in original if char.isdigit())
         seed = f"{original}:{group.key[1]}"
         if len(compact) == 7:

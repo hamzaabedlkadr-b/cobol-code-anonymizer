@@ -32,6 +32,7 @@ DEFAULT_ENTITIES = {
     "EMAIL",
     "CODICE_FISCALE",
     "MATRICOLA",
+    "SUSPECTED_MATRICOLA",
     "PHONE",
 }
 
@@ -87,6 +88,7 @@ MATRICOLA_KEY_VALUE_RE = re.compile(
     re.IGNORECASE,
 )
 MATRICOLA_VALUE_RE = re.compile(rf"^{MATRICOLA_VALUE}$")
+MATRICOLA_ANY_RE = re.compile(rf"(?<![A-Z0-9])(?P<value>{MATRICOLA_VALUE})(?![A-Z0-9])", re.IGNORECASE)
 
 PHONE_LABEL_RE = re.compile(
     r"\b(?:TEL|TELEFONO|PHONE|CELL|CELLULARE)\b\s*[:=]?\s*"
@@ -323,13 +325,6 @@ def name_pattern(name: str, min_single_token_length: int) -> str | None:
     return r"\s+".join(escaped_tokens)
 
 
-def compile_matricola_regex(matriculas: list[str]) -> re.Pattern[str] | None:
-    patterns = [re.escape(value) for value in matriculas if MATRICOLA_VALUE_RE.fullmatch(value)]
-    if not patterns:
-        return None
-    return re.compile(rf"(?<![A-Z0-9])({'|'.join(patterns)})(?![A-Z0-9])", re.IGNORECASE)
-
-
 def name_scan_ranges(text: str, scope: str) -> list[tuple[int, int]]:
     if scope == "all":
         return [(0, len(text))]
@@ -471,9 +466,7 @@ def scan_path(
     roster_name_regex = (
         compile_name_regex(roster_names, min_single_token_length=2) if "NAME" in selected else None
     )
-    roster_matricola_regex = (
-        compile_matricola_regex(roster_matriculas) if "MATRICOLA" in selected else None
-    )
+    roster_matricula_values = set(roster_matriculas)
     if employee_rosters:
         diag.append(
             "Loaded employee roster entries: "
@@ -496,7 +489,7 @@ def scan_path(
                 selected,
                 name_regex,
                 roster_name_regex,
-                roster_matricola_regex,
+                roster_matricula_values,
                 name_scope,
                 presidio_analyzer=presidio_analyzer,
             )
@@ -510,7 +503,7 @@ def scan_file(
     entities: set[str],
     name_regex: re.Pattern[str] | None,
     roster_name_regex: re.Pattern[str] | None,
-    roster_matricola_regex: re.Pattern[str] | None,
+    roster_matricula_values: set[str],
     name_scope: str,
     presidio_analyzer: object | None = None,
 ) -> list[Finding]:
@@ -524,10 +517,11 @@ def scan_file(
         findings.extend(regex_findings(text, rel_file, "IBAN", IBAN_RE, 0.96))
     if "CODICE_FISCALE" in entities:
         findings.extend(regex_findings(text, rel_file, "CODICE_FISCALE", CODICE_FISCALE_RE, 0.96))
-    if "MATRICOLA" in entities:
-        findings.extend(scan_matricola(text, rel_file))
-        if roster_matricola_regex:
-            findings.extend(scan_roster_matriculas(text, rel_file, roster_matricola_regex))
+    if "MATRICOLA" in entities or "SUSPECTED_MATRICOLA" in entities:
+        if roster_matricula_values:
+            findings.extend(scan_roster_classified_matriculas(text, rel_file, roster_matricula_values))
+        else:
+            findings.extend(scan_matricola(text, rel_file))
     if "PHONE" in entities:
         findings.extend(regex_findings(text, rel_file, "PHONE", PHONE_LABEL_RE, 0.78, group="value"))
     if "NAME" in entities:
@@ -592,28 +586,29 @@ def scan_matricola(text: str, rel_file: str) -> list[Finding]:
     return [finding for finding in findings if is_probable_matricola_value(finding.text)]
 
 
-def scan_roster_matriculas(
+def scan_roster_classified_matriculas(
     text: str,
     rel_file: str,
-    matricola_regex: re.Pattern[str],
+    roster_matriculas: set[str],
 ) -> list[Finding]:
     findings: list[Finding] = []
-    for match in matricola_regex.finditer(text):
-        start, end = match.start(), match.end()
+    for match in MATRICOLA_ANY_RE.finditer(text):
+        start, end = match.start("value"), match.end("value")
         value = text[start:end]
+        in_roster = value in roster_matriculas
         line, column = line_column(text, start)
         findings.append(
             Finding(
                 file=rel_file,
-                entity_type="MATRICOLA",
+                entity_type="MATRICOLA" if in_roster else "SUSPECTED_MATRICOLA",
                 text=value,
                 start=start,
                 end=end,
                 line=line,
                 column=column,
-                confidence=0.99,
+                confidence=0.99 if in_roster else 0.68,
                 context=context_for(text, start, end),
-                source="employee_roster",
+                source="employee_roster" if in_roster else "not_in_employee_roster",
             )
         )
     return findings
@@ -779,6 +774,7 @@ def remove_overlaps(findings: list[Finding]) -> list[Finding]:
         "IBAN": 95,
         "EMAIL": 90,
         "MATRICOLA": 80,
+        "SUSPECTED_MATRICOLA": 79,
         "PHONE": 75,
         "NAME": 60,
     }

@@ -206,6 +206,8 @@ Bianchi
 7654321
 ```
 
+Matricola-format numbers found in the code but not in this file are reported as `SUSPECTED_MATRICOLA`.
+
 Scan without the Presidio/spaCy model:
 
 ```powershell
