@@ -272,26 +272,55 @@ def parse_employee_roster_line(line: str) -> tuple[set[str], set[str]]:
     without_email = re.sub(EMAIL_RE, " ", without_ids)
     tokens = re.findall(r"[^\W\d_][^\W\d_'-]*", without_email, flags=re.UNICODE)
     tokens = [token for token in tokens if token.upper().replace("-", "") not in ROSTER_FIELD_STOPWORDS]
-    if len(tokens) < 2:
+    if not tokens:
         return set(), matriculas
+
+    names = roster_name_variants(tokens)
+    return names, matriculas
+
+
+def roster_name_variants(tokens: list[str]) -> set[str]:
+    if len(tokens) == 1:
+        return {tokens[0]} if len(tokens[0]) >= 2 else set()
 
     name = " ".join(tokens)
     names = {name}
     if len(tokens) == 2:
         names.add(f"{tokens[1]} {tokens[0]}")
-    return names, matriculas
+    if len(tokens[0]) > 2:
+        names.add(" ".join([tokens[0][0], *tokens[1:]]))
+    return names
 
 
-def compile_name_regex(names: list[str]) -> re.Pattern[str] | None:
+def compile_name_regex(names: list[str], min_single_token_length: int = 3) -> re.Pattern[str] | None:
     patterns = []
     for name in names:
-        if len(name) < 3:
+        pattern = name_pattern(name, min_single_token_length)
+        if not pattern:
             continue
-        escaped = re.escape(name).replace(r"\ ", r"\s+")
-        patterns.append(escaped)
+        patterns.append(pattern)
     if not patterns:
         return None
-    return re.compile(rf"(?<![A-Z0-9_-])({'|'.join(patterns)})(?![A-Z0-9_-])", re.IGNORECASE)
+    return re.compile(rf"(?<![\w-])({'|'.join(patterns)})(?![\w-])", re.IGNORECASE | re.UNICODE)
+
+
+def name_pattern(name: str, min_single_token_length: int) -> str | None:
+    tokens = name.split()
+    if not tokens:
+        return None
+    if len(tokens) == 1:
+        token = tokens[0]
+        if len(token) < min_single_token_length:
+            return None
+        return re.escape(token)
+
+    escaped_tokens = []
+    for token in tokens:
+        escaped = re.escape(token)
+        if len(token) == 1:
+            escaped += r"\.?"
+        escaped_tokens.append(escaped)
+    return r"\s+".join(escaped_tokens)
 
 
 def compile_matricola_regex(matriculas: list[str]) -> re.Pattern[str] | None:
@@ -439,7 +468,9 @@ def scan_path(
     roster_names, roster_matriculas = load_employee_rosters(employee_rosters)
     names = load_names(extra_watchlists, include_default=include_default_names)
     name_regex = compile_name_regex(names) if "NAME" in selected else None
-    roster_name_regex = compile_name_regex(roster_names) if "NAME" in selected else None
+    roster_name_regex = (
+        compile_name_regex(roster_names, min_single_token_length=2) if "NAME" in selected else None
+    )
     roster_matricola_regex = (
         compile_matricola_regex(roster_matriculas) if "MATRICOLA" in selected else None
     )

@@ -194,13 +194,13 @@ For a file that contains employee names and matricole, use `--employee-roster`. 
 On this PC, the anonymizer repo is expected here:
 
 ```text
-C:\Users\Lenovo\Desktop\Camera\control_flow\unused\anonymization\cobol-code-anonymizer
+C:\Users\Lenovo\Desktop\Camera\control_flow\cobol-code-anonymizer
 ```
 
 Put the real company roster in this private local path:
 
 ```text
-C:\Users\Lenovo\Desktop\Camera\control_flow\unused\anonymization\cobol-code-anonymizer\private_watchlists\company_workers.csv
+C:\Users\Lenovo\Desktop\Camera\control_flow\cobol-code-anonymizer\private_watchlists\company_workers.csv
 ```
 
 Inside the repo, that same file is referenced as:
@@ -223,10 +223,12 @@ The tool extracts:
 - names from the non-numeric text on each line
 - matricole matching `[567]?[0-9]{6}`
 
+Roster names are matched only as standalone tokens. Short names like `Wu` and compound surnames like `Di Re` are not replaced inside longer words. Initial variants are matched only as part of a full roster name, so a roster entry like `Hamza Abdul Kader` can match `H. Abdul Kader`, but a standalone `H` is not replaced.
+
 Exact roster-only scan:
 
 ```powershell
-cd C:\Users\Lenovo\Desktop\Camera\control_flow\unused\anonymization\cobol-code-anonymizer
+cd C:\Users\Lenovo\Desktop\Camera\control_flow\cobol-code-anonymizer
 
 python -m cobol_code_anonymizer C:\path\to\cobol-folder --employee-roster private_watchlists\company_workers.csv --entities NAME MATRICOLA --no-presidio --no-default-name-watchlist --scan-only --report-dir reports\employee_roster_scan
 ```
@@ -234,7 +236,7 @@ python -m cobol_code_anonymizer C:\path\to\cobol-folder --employee-roster privat
 Then anonymize reviewed findings:
 
 ```powershell
-cd C:\Users\Lenovo\Desktop\Camera\control_flow\unused\anonymization\cobol-code-anonymizer
+cd C:\Users\Lenovo\Desktop\Camera\control_flow\cobol-code-anonymizer
 
 python -m cobol_code_anonymizer C:\path\to\cobol-folder --employee-roster private_watchlists\company_workers.csv --entities NAME MATRICOLA --no-presidio --no-default-name-watchlist --out-dir anonymized
 ```
