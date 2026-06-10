@@ -1,7 +1,9 @@
-# Put one name or one matricola per line.
+# Put one first name, surname, or matricola per line.
 # Replace these fake examples with your local company roster after cloning.
 # Do not commit real employee data.
-Mario Rossi
+Mario
+Rossi
 5123456
-Giulia Bianchi
+Giulia
+Bianchi
 7654321

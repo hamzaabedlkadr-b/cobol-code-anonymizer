@@ -195,12 +195,14 @@ Put the real company roster here:
 C:\Users\Lenovo\Desktop\Camera\control_flow\cobol-code-anonymizer\private_watchlists\company_workers.txt
 ```
 
-Format: one name or one matricola per line.
+Format: one first name, surname, or matricola per line.
 
 ```text
-Mario Rossi
+Mario
+Rossi
 5123456
-Giulia Bianchi
+Giulia
+Bianchi
 7654321
 ```
 
