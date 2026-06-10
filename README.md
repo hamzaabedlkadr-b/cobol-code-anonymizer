@@ -208,20 +208,34 @@ Bianchi
 
 Matricola-format numbers found in the code but not in this file are reported as `SUSPECTED_MATRICOLA`.
 
-Scan without the Presidio/spaCy model:
+Create the review table without the Presidio/spaCy model:
 
 ```powershell
 cd C:\Users\Lenovo\Desktop\Camera\control_flow\cobol-code-anonymizer
 
-python -m cobol_code_anonymizer C:\path\to\cobol-folder --employee-roster private_watchlists\company_workers.txt --entities NAME MATRICOLA --no-presidio --no-default-name-watchlist --scan-only --report-dir reports\employee_roster_scan
+python -m cobol_code_anonymizer C:\path\to\cobol-folder --employee-roster private_watchlists\company_workers.txt --entities NAME MATRICOLA --no-presidio --no-default-name-watchlist --create-map reports\employee_roster_review\replacement_map.csv --report-dir reports\employee_roster_review
 ```
 
-Anonymize without the Presidio/spaCy model:
+Edit this table:
+
+```text
+C:\Users\Lenovo\Desktop\Camera\control_flow\cobol-code-anonymizer\reports\employee_roster_review\replacement_map.csv
+```
+
+Use the `replacement` column to choose what each found value becomes. The `locations` column shows file and line, for example `PROGRAM.CBL:123`.
+
+Create anonymized code files:
 
 ```powershell
 cd C:\Users\Lenovo\Desktop\Camera\control_flow\cobol-code-anonymizer
 
-python -m cobol_code_anonymizer C:\path\to\cobol-folder --employee-roster private_watchlists\company_workers.txt --entities NAME MATRICOLA --no-presidio --no-default-name-watchlist --out-dir anonymized
+python -m cobol_code_anonymizer C:\path\to\cobol-folder --employee-roster private_watchlists\company_workers.txt --entities NAME MATRICOLA --no-presidio --no-default-name-watchlist --map-file reports\employee_roster_review\replacement_map.csv --out-dir anonymized --auto
+```
+
+The anonymized code is written here:
+
+```text
+C:\Users\Lenovo\Desktop\Camera\control_flow\cobol-code-anonymizer\anonymized
 ```
 
 Replace `C:\path\to\cobol-folder` with the folder that contains the COBOL, copybook, and JCL files you want to scan.
