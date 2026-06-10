@@ -189,7 +189,7 @@ python -m cobol_code_anonymizer C:\path\to\cobol-folder --watchlist private_watc
 
 ## Employee Roster Scan
 
-For a file that contains employee names and matricole, use `--employee-roster`. The roster can be plain text, CSV, semicolon-separated, or tab-separated.
+For a file that contains employee names and matricole, use `--employee-roster`. The simplest format is one entry per line: either one name or one matricola. A file with around 24,000 lines is fine.
 
 On this PC, the anonymizer repo is expected here:
 
@@ -200,45 +200,54 @@ C:\Users\Lenovo\Desktop\Camera\control_flow\cobol-code-anonymizer
 Put the real company roster in this private local path:
 
 ```text
-C:\Users\Lenovo\Desktop\Camera\control_flow\cobol-code-anonymizer\private_watchlists\company_workers.csv
+C:\Users\Lenovo\Desktop\Camera\control_flow\cobol-code-anonymizer\private_watchlists\company_workers.txt
 ```
 
 Inside the repo, that same file is referenced as:
 
 ```text
-private_watchlists\company_workers.csv
+private_watchlists\company_workers.txt
 ```
 
-Example roster lines:
+Recommended file format:
 
 ```text
-matricola;nome;cognome
-5123456;Mario;Rossi
-7654321;Giulia;Bianchi
-998877;Luca Esposito
+# one entry per line; comments start with #
+Mario Rossi
+5123456
+Giulia Bianchi
+7654321
+Luca Esposito
+998877
+Wu
+Di Re
+Hamza Abdul Kader
+654321
 ```
 
 The tool extracts:
 
-- names from the non-numeric text on each line
+- names from text lines
 - matricole matching `[567]?[0-9]{6}`
+
+The order does not matter. The tool does not pair a name with the next matricola; it loads all names and all matricole as separate exact roster identifiers.
 
 Roster names are matched only as standalone tokens. Short names like `Wu` and compound surnames like `Di Re` are not replaced inside longer words. Initial variants are matched only as part of a full roster name, so a roster entry like `Hamza Abdul Kader` can match `H. Abdul Kader`, but a standalone `H` is not replaced.
 
-Exact roster-only scan:
+Exact roster-only scan without the Presidio/spaCy model:
 
 ```powershell
 cd C:\Users\Lenovo\Desktop\Camera\control_flow\cobol-code-anonymizer
 
-python -m cobol_code_anonymizer C:\path\to\cobol-folder --employee-roster private_watchlists\company_workers.csv --entities NAME MATRICOLA --no-presidio --no-default-name-watchlist --scan-only --report-dir reports\employee_roster_scan
+python -m cobol_code_anonymizer C:\path\to\cobol-folder --employee-roster private_watchlists\company_workers.txt --entities NAME MATRICOLA --no-presidio --no-default-name-watchlist --scan-only --report-dir reports\employee_roster_scan
 ```
 
-Then anonymize reviewed findings:
+Then anonymize reviewed findings without the Presidio/spaCy model:
 
 ```powershell
 cd C:\Users\Lenovo\Desktop\Camera\control_flow\cobol-code-anonymizer
 
-python -m cobol_code_anonymizer C:\path\to\cobol-folder --employee-roster private_watchlists\company_workers.csv --entities NAME MATRICOLA --no-presidio --no-default-name-watchlist --out-dir anonymized
+python -m cobol_code_anonymizer C:\path\to\cobol-folder --employee-roster private_watchlists\company_workers.txt --entities NAME MATRICOLA --no-presidio --no-default-name-watchlist --out-dir anonymized
 ```
 
 Replace `C:\path\to\cobol-folder` with the folder that contains the COBOL, copybook, and JCL files you want to scan.
