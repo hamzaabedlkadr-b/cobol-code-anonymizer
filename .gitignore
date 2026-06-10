@@ -16,3 +16,8 @@ anonymization_findings.json
 samples/*_anonymized*/
 samples/*_report*/
 samples/replacement_map_*.csv
+
+# Private PII inputs
+private_watchlists/
+*.private-watchlist.txt
+*.private-watchlist.csv

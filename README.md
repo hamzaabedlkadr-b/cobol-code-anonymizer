@@ -10,7 +10,7 @@ It scans for:
 - IBAN values
 - Email addresses
 - Italian codice fiscale values
-- Matricola / employee identifiers near fields like `MATRICOLA`, `CODDIP`, `COD-DIP`, `CODICE-DIPENDENTE`
+- Matricola / employee identifiers near fields like `MATRICOLA`, `CODDIP`, `COD-DIP`, `CODICE-DIPENDENTE`, using the format `[567]?[0-9]{6}`
 - Phone numbers when they appear near labels like `TEL`, `TELEFONO`, `PHONE`, `CELL`
 
 The tool writes anonymized copies to a new output folder. It does not modify the original files.
@@ -29,7 +29,7 @@ The command prints the values it found and asks what to replace each one with:
 
 ```text
 1/5 NAME 'Mario Rossi' (hits=2) [Nome001 Cognome001]:
-2/5 MATRICOLA 'A123456' (hits=1) [MAT000002]:
+2/5 MATRICOLA '5123456' (hits=1) [7280779]:
 3/5 IBAN 'IT60X0542811101000000123456' [IT05I8806934850742747220794]:
 ```
 
@@ -114,6 +114,14 @@ python -m cobol_code_anonymizer C:\path\to\cobol-folder --map-file replacement_m
 
 Rows with an empty `replacement` value are filled with the deterministic suggestion when `--auto` is used. Without `--auto`, the tool prompts for missing replacements.
 
+## Worker Identifier Non-Linkability
+
+Names and matricole are anonymized per occurrence by default. If `Mario` appears twice, the two findings get different replacement suggestions, such as `Nome001` and `Nome002`, instead of sharing one replacement.
+
+The same is true for matricole: two occurrences of `5123456` get separate valid replacement suggestions. This avoids leaking that two locations may refer to the same worker. Similar names and exact repeated names are not merged automatically.
+
+If review explicitly confirms that two occurrences should share a replacement, set the same `replacement` value for those rows in `replacement_map.csv`. Use the `key` column in the CSV to keep occurrence-specific rows distinct.
+
 ## Name Scan Scope
 
 By default, names are scanned only in likely human text areas to reduce false positives:
@@ -141,13 +149,105 @@ python -m cobol_code_anonymizer C:\path\to\cobol-folder --watchlist my_names.txt
 
 Use one name or surname per line.
 
+## Company Roster Watchlist
+
+If you have a list of people in the company, keep it as a private local file and pass it with `--watchlist`.
+
+Recommended location:
+
+```text
+private_watchlists\company_people.txt
+```
+
+That folder is ignored by git so real employee names do not get committed.
+
+Recommended format:
+
+```text
+# one entry per line; comments start with #
+Mario Rossi
+Rossi Mario
+Rossi
+Giulia Bianchi
+Bianchi Giulia
+Bianchi
+```
+
+Full names are safest. Surnames help catch COBOL comments and literals that contain only a last name, but they can create more false positives. Avoid adding common first names alone unless you really want a broad scan.
+
+Example:
+
+```powershell
+python -m cobol_code_anonymizer C:\path\to\cobol-folder --watchlist private_watchlists\company_people.txt --names-only --report-dir reports
+```
+
+Then anonymize reviewed findings:
+
+```powershell
+python -m cobol_code_anonymizer C:\path\to\cobol-folder --watchlist private_watchlists\company_people.txt --out-dir anonymized
+```
+
+## Employee Roster Scan
+
+For a file that contains employee names and matricole, use `--employee-roster`. The roster can be plain text, CSV, semicolon-separated, or tab-separated.
+
+On this PC, the anonymizer repo is expected here:
+
+```text
+C:\Users\Lenovo\Desktop\Camera\control_flow\unused\anonymization\cobol-code-anonymizer
+```
+
+Put the real company roster in this private local path:
+
+```text
+C:\Users\Lenovo\Desktop\Camera\control_flow\unused\anonymization\cobol-code-anonymizer\private_watchlists\company_workers.csv
+```
+
+Inside the repo, that same file is referenced as:
+
+```text
+private_watchlists\company_workers.csv
+```
+
+Example roster lines:
+
+```text
+matricola;nome;cognome
+5123456;Mario;Rossi
+7654321;Giulia;Bianchi
+998877;Luca Esposito
+```
+
+The tool extracts:
+
+- names from the non-numeric text on each line
+- matricole matching `[567]?[0-9]{6}`
+
+Exact roster-only scan:
+
+```powershell
+cd C:\Users\Lenovo\Desktop\Camera\control_flow\unused\anonymization\cobol-code-anonymizer
+
+python -m cobol_code_anonymizer C:\path\to\cobol-folder --employee-roster private_watchlists\company_workers.csv --entities NAME MATRICOLA --no-presidio --no-default-name-watchlist --scan-only --report-dir reports\employee_roster_scan
+```
+
+Then anonymize reviewed findings:
+
+```powershell
+cd C:\Users\Lenovo\Desktop\Camera\control_flow\unused\anonymization\cobol-code-anonymizer
+
+python -m cobol_code_anonymizer C:\path\to\cobol-folder --employee-roster private_watchlists\company_workers.csv --entities NAME MATRICOLA --no-presidio --no-default-name-watchlist --out-dir anonymized
+```
+
+Replace `C:\path\to\cobol-folder` with the folder that contains the COBOL, copybook, and JCL files you want to scan.
+
 ## Outputs
 
 For a normal anonymization run, the output folder contains:
 
 - anonymized copies of the input files
 - `anonymization_findings.json`
-- `replacement_map.csv`
+- `replacement_map.csv`, including an occurrence-specific `key` column for non-linkable names and matricole
 
 ## Install As A Command
 

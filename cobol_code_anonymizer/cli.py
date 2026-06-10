@@ -32,6 +32,7 @@ def main(argv: list[str] | None = None) -> int:
 
     entities = {"NAME"} if args.names_only else set(args.entities) if args.entities else set(DEFAULT_ENTITIES)
     extra_watchlists = [path.resolve() for path in args.watchlist]
+    employee_rosters = [path.resolve() for path in args.employee_roster]
     skip_root = output_dir if output_dir.exists() else None
     diagnostics: list[str] = []
 
@@ -39,6 +40,8 @@ def main(argv: list[str] | None = None) -> int:
         input_path=input_path,
         entities=entities,
         extra_watchlists=extra_watchlists,
+        employee_rosters=employee_rosters,
+        include_default_names=not args.no_default_name_watchlist,
         name_scope=args.name_scope,
         skip_root=skip_root,
         use_presidio=not args.no_presidio,
@@ -124,6 +127,18 @@ def build_parser() -> argparse.ArgumentParser:
         help="Extra text file with one name/surname per line. Can be used multiple times.",
     )
     parser.add_argument(
+        "--employee-roster",
+        action="append",
+        type=Path,
+        default=[],
+        help="Private employee roster file containing names and matriculas. Can be used multiple times.",
+    )
+    parser.add_argument(
+        "--no-default-name-watchlist",
+        action="store_true",
+        help="Do not load the bundled Italian name list; useful for exact roster-only scans.",
+    )
+    parser.add_argument(
         "--names-only",
         action="store_true",
         help="Print and write only detected names with folder, file, line, and column, then stop.",
@@ -146,7 +161,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--map-file",
         type=Path,
-        help="CSV mapping file with entity_type, original, and replacement columns.",
+        help="CSV mapping file with entity_type, key, original, and replacement columns.",
     )
     parser.add_argument("--scan-only", action="store_true", help="Only scan and write findings JSON.")
     parser.add_argument("--auto", action="store_true", help="Accept suggested replacements without prompts.")

@@ -10,6 +10,8 @@ from pathlib import Path
 
 from .scanner import Finding, iter_all_files, is_text_candidate, read_text, relative_name
 
+NON_LINKABLE_ENTITIES = {"NAME", "MATRICOLA"}
+
 
 @dataclass
 class ValueGroup:
@@ -37,10 +39,17 @@ def group_key(entity_type: str, value: str) -> tuple[str, str]:
     return entity_type, normalize_value(value)
 
 
+def finding_key(finding: Finding) -> tuple[str, str]:
+    if finding.entity_type in NON_LINKABLE_ENTITIES:
+        normalized = normalize_value(finding.text)
+        return finding.entity_type, f"OCCURRENCE:{finding.file}:{finding.line}:{finding.column}:{normalized}"
+    return group_key(finding.entity_type, finding.text)
+
+
 def group_findings(findings: list[Finding]) -> list[ValueGroup]:
     groups: dict[tuple[str, str], ValueGroup] = {}
     for finding in findings:
-        key = group_key(finding.entity_type, finding.text)
+        key = finding_key(finding)
         if key not in groups:
             groups[key] = ValueGroup(
                 entity_type=finding.entity_type,
@@ -171,13 +180,12 @@ def suggested_replacement(group: ValueGroup, index: int, salt: str) -> str:
         digits = "".join(char for char in original if char.isdigit())
         return "0" * max(len(digits), 8)
     if group.entity_type == "MATRICOLA":
-        if original.isdigit():
-            width = len(original)
-            number = int(digits_from_hash(original, salt + ":matricola", width))
-            return f"{number:0{width}d}"[-width:]
-        width = len(original)
-        digits = digits_from_hash(original, salt + ":matricola", max(width - 1, 1))
-        return ("M" + digits)[:width]
+        compact = "".join(char for char in original if char.isdigit())
+        seed = f"{original}:{group.key[1]}"
+        if len(compact) == 7:
+            prefix = "567"[int(digest(seed, salt + ":matricola-prefix"), 16) % 3]
+            return prefix + digits_from_hash(seed, salt + ":matricola", 6)
+        return digits_from_hash(seed, salt + ":matricola", 6)
     return f"ANON_{index:03d}"
 
 
@@ -189,11 +197,15 @@ def load_mapping(path: Path | None) -> dict[tuple[str, str], str]:
         reader = csv.DictReader(handle)
         for row in reader:
             entity_type = (row.get("entity_type") or "").strip()
+            key = (row.get("key") or "").strip()
             original = (row.get("original") or "").strip()
             replacement = (row.get("replacement") or "").strip()
-            if not entity_type or not original or not replacement:
+            if not entity_type or not replacement:
                 continue
-            mapping[group_key(entity_type, original)] = replacement
+            if key:
+                mapping[(entity_type, key)] = replacement
+            elif original and entity_type not in NON_LINKABLE_ENTITIES:
+                mapping[group_key(entity_type, original)] = replacement
     return mapping
 
 
@@ -207,6 +219,7 @@ def write_mapping_template(
     with path.open("w", newline="", encoding="utf-8") as handle:
         fieldnames = [
             "entity_type",
+            "key",
             "original",
             "suggested_replacement",
             "replacement",
@@ -219,6 +232,7 @@ def write_mapping_template(
             writer.writerow(
                 {
                     "entity_type": group.entity_type,
+                    "key": group.key[1],
                     "original": group.original,
                     "suggested_replacement": suggested_replacement(group, index, salt),
                     "replacement": (replacements or {}).get(group.key, ""),
@@ -237,7 +251,7 @@ def apply_replacements(
     output_dir.mkdir(parents=True, exist_ok=True)
     by_file: dict[str, list[Finding]] = {}
     for finding in findings:
-        if group_key(finding.entity_type, finding.text) in replacements:
+        if finding_key(finding) in replacements:
             by_file.setdefault(finding.file, []).append(finding)
 
     changed_files = 0
@@ -256,7 +270,7 @@ def apply_replacements(
             continue
         changed = False
         for finding in file_findings:
-            replacement = replacements[group_key(finding.entity_type, finding.text)]
+            replacement = replacements[finding_key(finding)]
             if not replacement:
                 continue
             text = text[: finding.start] + replacement + text[finding.end :]

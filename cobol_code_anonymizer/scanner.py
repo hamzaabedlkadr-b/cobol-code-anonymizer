@@ -69,22 +69,24 @@ MATRICOLA_STOP_VALUES = {
     "ZEROS",
 }
 
-MATRICOLA_VALUE = r"[A-Z0-9][A-Z0-9./-]{2,30}"
+# Company matricola format: six digits, optionally prefixed by 5, 6, or 7.
+MATRICOLA_VALUE = r"[567]?\d{6}"
 MATRICOLA_MOVE_RE = re.compile(
-    rf"\bMOVE\s+['\"]?(?P<value>{MATRICOLA_VALUE})['\"]?\s+TO\s+"
+    rf"\bMOVE\s+['\"]?(?P<value>{MATRICOLA_VALUE})(?![A-Z0-9])['\"]?\s+TO\s+"
     rf"[\w-]*(?:{'|'.join(re.escape(label) for label in MATRICOLA_LABELS)})[\w-]*\b",
     re.IGNORECASE,
 )
 MATRICOLA_FIELD_VALUE_RE = re.compile(
     rf"\b[\w-]*(?:{'|'.join(re.escape(label) for label in MATRICOLA_LABELS)})[\w-]*\b"
-    rf"[^\r\n]{{0,90}}\bVALUE\s+['\"]?(?P<value>{MATRICOLA_VALUE})['\"]?",
+    rf"[^\r\n]{{0,90}}\bVALUE\s+['\"]?(?P<value>{MATRICOLA_VALUE})(?![A-Z0-9])['\"]?",
     re.IGNORECASE,
 )
 MATRICOLA_KEY_VALUE_RE = re.compile(
     rf"\b(?:{'|'.join(re.escape(label) for label in MATRICOLA_LABELS)})\b"
-    rf"\s*[:=]\s*['\"]?(?P<value>{MATRICOLA_VALUE})['\"]?",
+    rf"\s*[:=]\s*['\"]?(?P<value>{MATRICOLA_VALUE})(?![A-Z0-9])['\"]?",
     re.IGNORECASE,
 )
+MATRICOLA_VALUE_RE = re.compile(rf"^{MATRICOLA_VALUE}$")
 
 PHONE_LABEL_RE = re.compile(
     r"\b(?:TEL|TELEFONO|PHONE|CELL|CELLULARE)\b\s*[:=]?\s*"
@@ -112,6 +114,19 @@ NAME_STOPWORDS = {
     "TEL",
     "TELEFONO",
     "TEST",
+}
+ROSTER_FIELD_STOPWORDS = {
+    "ID",
+    "EMPLOYEE",
+    "EMPLOYEEID",
+    "MATR",
+    "MATRICOLA",
+    "NAME",
+    "NOME",
+    "COGNOME",
+    "SURNAME",
+    "FIRSTNAME",
+    "LASTNAME",
 }
 
 
@@ -212,9 +227,12 @@ def trim_span(text: str, start: int, end: int) -> tuple[int, int]:
     return start, end
 
 
-def load_names(extra_watchlists: list[Path] | None = None) -> list[str]:
+def load_names(
+    extra_watchlists: list[Path] | None = None,
+    include_default: bool = True,
+) -> list[str]:
     names_path = Path(__file__).parent / "data" / "italian_names.txt"
-    paths = [names_path] + list(extra_watchlists or [])
+    paths = ([names_path] if include_default else []) + list(extra_watchlists or [])
     names: set[str] = set()
     for path in paths:
         if not path.exists():
@@ -224,6 +242,44 @@ def load_names(extra_watchlists: list[Path] | None = None) -> list[str]:
             if value and not value.startswith("#"):
                 names.add(value)
     return sorted(names, key=lambda value: (-len(value), value.upper()))
+
+
+def load_employee_rosters(roster_paths: list[Path] | None = None) -> tuple[list[str], list[str]]:
+    names: set[str] = set()
+    matriculas: set[str] = set()
+    for path in roster_paths or []:
+        if not path.exists():
+            continue
+        for line in read_text(path).splitlines():
+            line_names, line_matriculas = parse_employee_roster_line(line)
+            names.update(line_names)
+            matriculas.update(line_matriculas)
+    return (
+        sorted(names, key=lambda value: (-len(value), value.upper())),
+        sorted(matriculas, key=lambda value: (-len(value), value)),
+    )
+
+
+def parse_employee_roster_line(line: str) -> tuple[set[str], set[str]]:
+    if not line.strip() or line.lstrip().startswith("#"):
+        return set(), set()
+
+    matriculas = set()
+    for match in re.finditer(rf"(?<![A-Z0-9]){MATRICOLA_VALUE}(?![A-Z0-9])", line, re.IGNORECASE):
+        matriculas.add(match.group(0))
+
+    without_ids = re.sub(rf"(?<![A-Z0-9]){MATRICOLA_VALUE}(?![A-Z0-9])", " ", line, flags=re.IGNORECASE)
+    without_email = re.sub(EMAIL_RE, " ", without_ids)
+    tokens = re.findall(r"[^\W\d_][^\W\d_'-]*", without_email, flags=re.UNICODE)
+    tokens = [token for token in tokens if token.upper().replace("-", "") not in ROSTER_FIELD_STOPWORDS]
+    if len(tokens) < 2:
+        return set(), matriculas
+
+    name = " ".join(tokens)
+    names = {name}
+    if len(tokens) == 2:
+        names.add(f"{tokens[1]} {tokens[0]}")
+    return names, matriculas
 
 
 def compile_name_regex(names: list[str]) -> re.Pattern[str] | None:
@@ -236,6 +292,13 @@ def compile_name_regex(names: list[str]) -> re.Pattern[str] | None:
     if not patterns:
         return None
     return re.compile(rf"(?<![A-Z0-9_-])({'|'.join(patterns)})(?![A-Z0-9_-])", re.IGNORECASE)
+
+
+def compile_matricola_regex(matriculas: list[str]) -> re.Pattern[str] | None:
+    patterns = [re.escape(value) for value in matriculas if MATRICOLA_VALUE_RE.fullmatch(value)]
+    if not patterns:
+        return None
+    return re.compile(rf"(?<![A-Z0-9])({'|'.join(patterns)})(?![A-Z0-9])", re.IGNORECASE)
 
 
 def name_scan_ranges(text: str, scope: str) -> list[tuple[int, int]]:
@@ -363,6 +426,8 @@ def scan_path(
     input_path: Path,
     entities: set[str] | None = None,
     extra_watchlists: list[Path] | None = None,
+    employee_rosters: list[Path] | None = None,
+    include_default_names: bool = True,
     name_scope: str = "context",
     skip_root: Path | None = None,
     use_presidio: bool = True,
@@ -371,21 +436,36 @@ def scan_path(
 ) -> list[Finding]:
     selected = entities or DEFAULT_ENTITIES
     diag = diagnostics if diagnostics is not None else []
-    names = load_names(extra_watchlists)
+    roster_names, roster_matriculas = load_employee_rosters(employee_rosters)
+    names = load_names(extra_watchlists, include_default=include_default_names)
     name_regex = compile_name_regex(names) if "NAME" in selected else None
+    roster_name_regex = compile_name_regex(roster_names) if "NAME" in selected else None
+    roster_matricola_regex = (
+        compile_matricola_regex(roster_matriculas) if "MATRICOLA" in selected else None
+    )
+    if employee_rosters:
+        diag.append(
+            "Loaded employee roster entries: "
+            f"{len(roster_names)} name variants, {len(roster_matriculas)} matriculas."
+        )
     presidio_analyzer = (
         build_presidio_analyzer(presidio_model, diag)
         if use_presidio and "NAME" in selected
         else None
     )
     findings: list[Finding] = []
+    roster_paths = {path.resolve() for path in employee_rosters or []}
     for path in iter_text_files(input_path, skip_root=skip_root):
+        if path.resolve() in roster_paths:
+            continue
         findings.extend(
             scan_file(
                 path,
                 input_path,
                 selected,
                 name_regex,
+                roster_name_regex,
+                roster_matricola_regex,
                 name_scope,
                 presidio_analyzer=presidio_analyzer,
             )
@@ -398,6 +478,8 @@ def scan_file(
     input_path: Path,
     entities: set[str],
     name_regex: re.Pattern[str] | None,
+    roster_name_regex: re.Pattern[str] | None,
+    roster_matricola_regex: re.Pattern[str] | None,
     name_scope: str,
     presidio_analyzer: object | None = None,
 ) -> list[Finding]:
@@ -413,6 +495,8 @@ def scan_file(
         findings.extend(regex_findings(text, rel_file, "CODICE_FISCALE", CODICE_FISCALE_RE, 0.96))
     if "MATRICOLA" in entities:
         findings.extend(scan_matricola(text, rel_file))
+        if roster_matricola_regex:
+            findings.extend(scan_roster_matriculas(text, rel_file, roster_matricola_regex))
     if "PHONE" in entities:
         findings.extend(regex_findings(text, rel_file, "PHONE", PHONE_LABEL_RE, 0.78, group="value"))
     if "NAME" in entities:
@@ -421,6 +505,17 @@ def scan_file(
             name_findings.extend(scan_presidio_names(text, rel_file, presidio_analyzer, name_scope))
         if name_regex:
             name_findings.extend(scan_watchlist_names(text, rel_file, name_regex, name_scope))
+        if roster_name_regex:
+            name_findings.extend(
+                scan_watchlist_names(
+                    text,
+                    rel_file,
+                    roster_name_regex,
+                    name_scope,
+                    source="employee_roster",
+                    confidence=0.92,
+                )
+            )
         findings.extend(remove_overlaps(name_findings))
 
     return findings
@@ -466,14 +561,39 @@ def scan_matricola(text: str, rel_file: str) -> list[Finding]:
     return [finding for finding in findings if is_probable_matricola_value(finding.text)]
 
 
+def scan_roster_matriculas(
+    text: str,
+    rel_file: str,
+    matricola_regex: re.Pattern[str],
+) -> list[Finding]:
+    findings: list[Finding] = []
+    for match in matricola_regex.finditer(text):
+        start, end = match.start(), match.end()
+        value = text[start:end]
+        line, column = line_column(text, start)
+        findings.append(
+            Finding(
+                file=rel_file,
+                entity_type="MATRICOLA",
+                text=value,
+                start=start,
+                end=end,
+                line=line,
+                column=column,
+                confidence=0.99,
+                context=context_for(text, start, end),
+                source="employee_roster",
+            )
+        )
+    return findings
+
+
 def is_probable_matricola_value(value: str) -> bool:
     cleaned = value.strip().strip("\"'")
     upper = cleaned.upper()
     if upper in MATRICOLA_STOP_VALUES:
         return False
-    if len(cleaned) < 3:
-        return False
-    return any(char.isdigit() for char in cleaned)
+    return bool(MATRICOLA_VALUE_RE.fullmatch(cleaned))
 
 
 def scan_presidio_names(
@@ -558,6 +678,8 @@ def scan_watchlist_names(
     rel_file: str,
     name_regex: re.Pattern[str],
     scope: str,
+    source: str = "watchlist",
+    confidence: float = 0.7,
 ) -> list[Finding]:
     raw: list[Finding] = []
     for start_range, end_range in name_scan_ranges(text, scope):
@@ -578,9 +700,9 @@ def scan_watchlist_names(
                     end=end,
                     line=line,
                     column=column,
-                    confidence=0.7,
+                    confidence=confidence,
                     context=context_for(text, start, end),
-                    source="watchlist",
+                    source=source,
                 )
             )
     raw = remove_overlaps(raw)
