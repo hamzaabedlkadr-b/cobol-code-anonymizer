@@ -189,52 +189,22 @@ python -m cobol_code_anonymizer C:\path\to\cobol-folder --watchlist private_watc
 
 ## Employee Roster Scan
 
-For a file that contains employee names and matricole, use `--employee-roster`. The simplest format is one entry per line: either one name or one matricola. A file with around 24,000 lines is fine.
-
-On this PC, the anonymizer repo is expected here:
-
-```text
-C:\Users\Lenovo\Desktop\Camera\control_flow\cobol-code-anonymizer
-```
-
-Put the real company roster in this private local path:
+Put the real company roster here:
 
 ```text
 C:\Users\Lenovo\Desktop\Camera\control_flow\cobol-code-anonymizer\private_watchlists\company_workers.txt
 ```
 
-Inside the repo, that same file is referenced as:
+Format: one name or one matricola per line.
 
 ```text
-private_watchlists\company_workers.txt
-```
-
-Recommended file format:
-
-```text
-# one entry per line; comments start with #
 Mario Rossi
 5123456
 Giulia Bianchi
 7654321
-Luca Esposito
-998877
-Wu
-Di Re
-Hamza Abdul Kader
-654321
 ```
 
-The tool extracts:
-
-- names from text lines
-- matricole matching `[567]?[0-9]{6}`
-
-The order does not matter. The tool does not pair a name with the next matricola; it loads all names and all matricole as separate exact roster identifiers.
-
-Roster names are matched only as standalone tokens. Short names like `Wu` and compound surnames like `Di Re` are not replaced inside longer words. Initial variants are matched only as part of a full roster name, so a roster entry like `Hamza Abdul Kader` can match `H. Abdul Kader`, but a standalone `H` is not replaced.
-
-Exact roster-only scan without the Presidio/spaCy model:
+Scan without the Presidio/spaCy model:
 
 ```powershell
 cd C:\Users\Lenovo\Desktop\Camera\control_flow\cobol-code-anonymizer
@@ -242,7 +212,7 @@ cd C:\Users\Lenovo\Desktop\Camera\control_flow\cobol-code-anonymizer
 python -m cobol_code_anonymizer C:\path\to\cobol-folder --employee-roster private_watchlists\company_workers.txt --entities NAME MATRICOLA --no-presidio --no-default-name-watchlist --scan-only --report-dir reports\employee_roster_scan
 ```
 
-Then anonymize reviewed findings without the Presidio/spaCy model:
+Anonymize without the Presidio/spaCy model:
 
 ```powershell
 cd C:\Users\Lenovo\Desktop\Camera\control_flow\cobol-code-anonymizer
