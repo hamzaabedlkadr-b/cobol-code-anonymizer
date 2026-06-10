@@ -18,6 +18,8 @@ samples/*_report*/
 samples/replacement_map_*.csv
 
 # Private PII inputs
-private_watchlists/
+private_watchlists/*
+!private_watchlists/
+!private_watchlists/company_workers.txt
 *.private-watchlist.txt
 *.private-watchlist.csv
