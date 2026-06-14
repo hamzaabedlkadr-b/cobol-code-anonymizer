@@ -98,6 +98,41 @@ Mario Rossi | src\programs | src\programs\PDCBVC.CBL | 15 | 25 | presidio_spacy
 Mattarella | jcl | jcl\JOB001.JCL | 4 | 18 | watchlist
 ```
 
+## Unknown Surname Discovery
+
+Presidio and watchlists can miss isolated uppercase surnames, especially in old COBOL comments such as `MAIL <SURNAME>`, `MODIFICHE DA <SURNAME>`, or `D'<SURNAME>`.
+
+Use this review-first mode to find surname-like tokens even when they are not already in a list:
+
+```powershell
+python -m cobol_code_anonymizer C:\path\to\cobol-folder --names-only --detect-unknown-names --report-dir reports\unknown_names
+```
+
+The report marks these as:
+
+```text
+source = unknown_name_heuristic
+```
+
+Review the CSV before anonymizing:
+
+```text
+reports\unknown_names\names_findings.csv
+```
+
+After review, you have two safe options:
+
+1. Add confirmed names/surnames to a private watchlist and rerun.
+2. Run anonymization with `--detect-unknown-names` and answer the prompts manually, using `skip` for false positives.
+
+Example interactive anonymization:
+
+```powershell
+python -m cobol_code_anonymizer C:\path\to\cobol-folder --detect-unknown-names --out-dir anonymized
+```
+
+Avoid combining `--detect-unknown-names` with `--auto` until you have reviewed the candidates, because unknown-name detection intentionally favors catching suspicious leftovers over perfect precision.
+
 ## CSV Review Workflow
 
 If you prefer choosing replacements in a file:

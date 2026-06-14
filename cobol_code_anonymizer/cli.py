@@ -33,7 +33,8 @@ def main(argv: list[str] | None = None) -> int:
     entities = {"NAME"} if args.names_only else set(args.entities) if args.entities else set(DEFAULT_ENTITIES)
     extra_watchlists = [path.resolve() for path in args.watchlist]
     employee_rosters = [path.resolve() for path in args.employee_roster]
-    skip_root = output_dir if output_dir.exists() else None
+    report_dir = args.report_dir.resolve() if args.report_dir else output_dir
+    skip_roots = [path for path in (output_dir, report_dir) if path.exists()]
     diagnostics: list[str] = []
 
     findings = scan_path(
@@ -42,8 +43,10 @@ def main(argv: list[str] | None = None) -> int:
         extra_watchlists=extra_watchlists,
         employee_rosters=employee_rosters,
         include_default_names=not args.no_default_name_watchlist,
+        detect_unknown_names=args.detect_unknown_names,
+        unknown_name_min_length=args.unknown_name_min_length,
         name_scope=args.name_scope,
-        skip_root=skip_root,
+        skip_root=skip_roots,
         use_presidio=not args.no_presidio,
         presidio_model=args.presidio_model,
         diagnostics=diagnostics,
@@ -53,7 +56,6 @@ def main(argv: list[str] | None = None) -> int:
     for message in diagnostics:
         print(f"Warning: {message}")
 
-    report_dir = args.report_dir.resolve() if args.report_dir else output_dir
     report_dir.mkdir(parents=True, exist_ok=True)
     write_json(report_dir / "anonymization_findings.json", findings)
 
@@ -137,6 +139,20 @@ def build_parser() -> argparse.ArgumentParser:
         "--no-default-name-watchlist",
         action="store_true",
         help="Do not load the bundled Italian name list; useful for exact roster-only scans.",
+    )
+    parser.add_argument(
+        "--detect-unknown-names",
+        action="store_true",
+        help=(
+            "Also report uppercase surname-like tokens in comments/contact text even when they are "
+            "not in Presidio or a watchlist. Review these before anonymizing."
+        ),
+    )
+    parser.add_argument(
+        "--unknown-name-min-length",
+        type=int,
+        default=4,
+        help="Minimum letters for --detect-unknown-names candidates after removing apostrophes.",
     )
     parser.add_argument(
         "--names-only",

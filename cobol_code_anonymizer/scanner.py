@@ -95,6 +95,11 @@ PHONE_LABEL_RE = re.compile(
     r"(?P<value>\+?\d[\d .()/-]{6,20}\d)",
     re.IGNORECASE,
 )
+UNKNOWN_NAME_TOKEN_RE = re.compile(
+    r"(?<![\w'])"
+    r"(?P<value>[A-ZÀ-ÖØ-Þ][A-ZÀ-ÖØ-Þ'’]{2,})"
+    r"(?![\w'])"
+)
 
 NAME_STOPWORDS = {
     "AUTHOR",
@@ -116,6 +121,119 @@ NAME_STOPWORDS = {
     "TEL",
     "TELEFONO",
     "TEST",
+}
+UNKNOWN_NAME_STOPWORDS = NAME_STOPWORDS | {
+    "ABEND",
+    "ACCT",
+    "AGGIORNAMENTO",
+    "AGGIORNARE",
+    "AGGIORNATA",
+    "AGGIUNTA",
+    "ALLA",
+    "ANAGRAFICA",
+    "ANNOTAZIONE",
+    "APPOGGIO",
+    "AREA",
+    "ASSEGNI",
+    "ASSIGN",
+    "ATTENZIONE",
+    "BATCH",
+    "BREVE",
+    "CALL",
+    "CATALOGO",
+    "CATEGORIE",
+    "CATEGORIEPARTICOLARI",
+    "CEDOLINO",
+    "CESSATI",
+    "CESSAZIONE",
+    "CODICE",
+    "COMMENT",
+    "COMPOSTO",
+    "COMP",
+    "CONGUAGLIO",
+    "CONTABILI",
+    "CONTROLLO",
+    "COPY",
+    "COPYBOOK",
+    "CREATE",
+    "CREATED",
+    "DATA",
+    "DATI",
+    "DEBITO",
+    "DELLA",
+    "DELLE",
+    "DIREZIONE",
+    "DISPLAY",
+    "DIVISION",
+    "DOPO",
+    "ELENCO",
+    "ELIMINAZIONE",
+    "ERRORE",
+    "EXEC",
+    "FILE",
+    "GESTIONE",
+    "IMPOSTA",
+    "INPUT",
+    "LABEL",
+    "LAVORAZIONE",
+    "MAGGIORE",
+    "MATCH",
+    "MODIFICA",
+    "MODIFICHE",
+    "NON",
+    "NOMINATIVI",
+    "NOTE",
+    "OUTPUT",
+    "PARM",
+    "PIC",
+    "PROGRAM",
+    "PROGRAMMA",
+    "PROCEDURE",
+    "PUNTAMENTO",
+    "RECORD",
+    "RIATTIVATI",
+    "RIGA",
+    "RIGHE",
+    "RIVERSIBILITA",
+    "RIVERSIB",
+    "SCRITTURA",
+    "SENZA",
+    "SPACES",
+    "STAMPA",
+    "STOP",
+    "TABELLA",
+    "VALUE",
+    "VALIDATO",
+    "VALIDATA",
+    "VALIDAZIONE",
+    "VERIFICARE",
+    "VERIFICA",
+    "VITALIZI",
+    "WORKING",
+    "WURTH",
+    "ZERO",
+    "ZEROS",
+}
+UNKNOWN_NAME_CONTEXT_WORDS = {
+    "AGGIORNATO",
+    "ANALISTA",
+    "AUTORE",
+    "AUTHOR",
+    "AVVISARE",
+    "CHIAMARE",
+    "CONTATTARE",
+    "CREATO",
+    "EMAIL",
+    "REFERENTE",
+    "RESPONSABILE",
+    "MAIL",
+    "OPERATORE",
+    "SEGNALARE",
+    "SIG",
+    "SIG.",
+    "SIGRA",
+    "SIG.RA",
+    "UTENTE",
 }
 ROSTER_FIELD_STOPWORDS = {
     "ID",
@@ -166,28 +284,38 @@ def write_json(path: Path, findings: list[Finding]) -> None:
     )
 
 
-def iter_text_files(input_path: Path, skip_root: Path | None = None) -> list[Path]:
+def iter_text_files(input_path: Path, skip_root: Path | list[Path] | None = None) -> list[Path]:
     if input_path.is_file():
         return [input_path] if is_text_candidate(input_path) else []
+    skip_roots = normalize_skip_roots(skip_root)
     files: list[Path] = []
     for path in input_path.rglob("*"):
-        if skip_root and is_relative_to(path, skip_root):
+        if any(is_relative_to(path, root) for root in skip_roots):
             continue
         if path.is_file() and is_text_candidate(path):
             files.append(path)
     return files
 
 
-def iter_all_files(input_path: Path, skip_root: Path | None = None) -> list[Path]:
+def iter_all_files(input_path: Path, skip_root: Path | list[Path] | None = None) -> list[Path]:
     if input_path.is_file():
         return [input_path]
+    skip_roots = normalize_skip_roots(skip_root)
     files: list[Path] = []
     for path in input_path.rglob("*"):
-        if skip_root and is_relative_to(path, skip_root):
+        if any(is_relative_to(path, root) for root in skip_roots):
             continue
         if path.is_file():
             files.append(path)
     return files
+
+
+def normalize_skip_roots(skip_root: Path | list[Path] | None) -> list[Path]:
+    if skip_root is None:
+        return []
+    if isinstance(skip_root, Path):
+        return [skip_root]
+    return [root for root in skip_root if root is not None]
 
 
 def is_text_candidate(path: Path) -> bool:
@@ -342,6 +470,23 @@ def name_scan_ranges(text: str, scope: str) -> list[tuple[int, int]]:
     return merge_ranges(ranges)
 
 
+def unknown_name_scan_ranges(text: str, scope: str) -> list[tuple[int, int]]:
+    if scope == "all":
+        return [(0, len(text))]
+
+    ranges: list[tuple[int, int]] = []
+    offset = 0
+    for line in text.splitlines(keepends=True):
+        if is_comment_line(line):
+            ranges.append((offset, offset + len(line)))
+        offset += len(line)
+
+    for match in re.finditer(r"'[^'\r\n]{2,160}'|\"[^\"\r\n]{2,160}\"", text):
+        ranges.append((match.start(), match.end()))
+
+    return merge_ranges(ranges)
+
+
 def is_name_context_line(line: str) -> bool:
     stripped = line.strip()
     upper = line.upper()
@@ -452,8 +597,10 @@ def scan_path(
     extra_watchlists: list[Path] | None = None,
     employee_rosters: list[Path] | None = None,
     include_default_names: bool = True,
+    detect_unknown_names: bool = False,
+    unknown_name_min_length: int = 4,
     name_scope: str = "context",
-    skip_root: Path | None = None,
+    skip_root: Path | list[Path] | None = None,
     use_presidio: bool = True,
     presidio_model: str = "it_core_news_sm",
     diagnostics: list[str] | None = None,
@@ -490,6 +637,8 @@ def scan_path(
                 name_regex,
                 roster_name_regex,
                 roster_matricula_values,
+                detect_unknown_names,
+                unknown_name_min_length,
                 name_scope,
                 presidio_analyzer=presidio_analyzer,
             )
@@ -504,6 +653,8 @@ def scan_file(
     name_regex: re.Pattern[str] | None,
     roster_name_regex: re.Pattern[str] | None,
     roster_matricula_values: set[str],
+    detect_unknown_names: bool,
+    unknown_name_min_length: int,
     name_scope: str,
     presidio_analyzer: object | None = None,
 ) -> list[Finding]:
@@ -539,6 +690,15 @@ def scan_file(
                     name_scope,
                     source="employee_roster",
                     confidence=0.92,
+                )
+            )
+        if detect_unknown_names:
+            name_findings.extend(
+                scan_unknown_name_candidates(
+                    text,
+                    rel_file,
+                    name_scope,
+                    min_length=unknown_name_min_length,
                 )
             )
         findings.extend(remove_overlaps(name_findings))
@@ -697,6 +857,125 @@ def is_probable_name_false_positive(value: str) -> bool:
         *NAME_STOPWORDS,
     }
     return any(word in technical_words for word in words)
+
+
+def scan_unknown_name_candidates(
+    text: str,
+    rel_file: str,
+    scope: str,
+    min_length: int,
+) -> list[Finding]:
+    findings: list[Finding] = []
+    for start_range, end_range in unknown_name_scan_ranges(text, scope):
+        segment = text[start_range:end_range]
+        for match in UNKNOWN_NAME_TOKEN_RE.finditer(segment):
+            start = start_range + match.start("value")
+            end = start_range + match.end("value")
+            start, end = trim_unknown_name_span(text, start, end)
+            if start >= end:
+                continue
+            if is_inside_email_or_url(text, start, end):
+                continue
+            value = normalize_unknown_name_token(text[start:end])
+            if not looks_like_unknown_name(value, text, start, end, min_length):
+                continue
+            line, column = line_column(text, start)
+            findings.append(
+                Finding(
+                    file=rel_file,
+                    entity_type="NAME",
+                    text=value,
+                    start=start,
+                    end=end,
+                    line=line,
+                    column=column,
+                    confidence=unknown_name_confidence(value, text, start, end),
+                    context=context_for(text, start, end),
+                    source="unknown_name_heuristic",
+                )
+            )
+    return remove_overlaps(findings)
+
+
+def normalize_unknown_name_token(value: str) -> str:
+    return value.replace("’", "'")
+
+
+def trim_unknown_name_span(text: str, start: int, end: int) -> tuple[int, int]:
+    boundary_chars = " \t\r\n.,;:()[]{}\"'"
+    while start < end and text[start] in boundary_chars:
+        start += 1
+    while end > start and text[end - 1] in boundary_chars:
+        end -= 1
+    return start, end
+
+
+def looks_like_unknown_name(
+    value: str,
+    text: str,
+    start: int,
+    end: int,
+    min_length: int,
+) -> bool:
+    upper = value.upper()
+    if len(value.replace("'", "")) < min_length:
+        return False
+    if any(char.isdigit() for char in value):
+        return False
+    if upper in UNKNOWN_NAME_STOPWORDS or upper in UNKNOWN_NAME_CONTEXT_WORDS:
+        return False
+    if upper.startswith(("PDR", "PDH", "PDC", "SQL", "DFH", "CICS")):
+        return False
+    if "-" in value or "_" in value:
+        return False
+    if not has_unknown_name_context(value, text, start, end):
+        return False
+    return True
+
+
+def has_unknown_name_context(value: str, text: str, start: int, end: int) -> bool:
+    line_start = text.rfind("\n", 0, start) + 1
+    line_end = text.find("\n", end)
+    if line_end == -1:
+        line_end = len(text)
+    line = text[line_start:line_end]
+    upper_line = line.upper()
+    if "'" in value:
+        return True
+    if any(word in upper_line for word in UNKNOWN_NAME_CONTEXT_WORDS):
+        return True
+    return is_comment_line(line) and looks_like_isolated_surname(value)
+
+
+def is_comment_line(line: str) -> bool:
+    stripped = line.strip()
+    return stripped.startswith("*") or stripped.startswith("//*") or (len(line) > 6 and line[6] == "*")
+
+
+def looks_like_isolated_surname(value: str) -> bool:
+    letters = value.replace("'", "")
+    if not (4 <= len(letters) <= 18):
+        return False
+    upper = letters.upper()
+    if upper in UNKNOWN_NAME_STOPWORDS:
+        return False
+    common_non_name_endings = ("MENTO", "ZIONE", "GRAFICA", "ABILE", "ATORI", "AZIONE")
+    if upper.endswith(common_non_name_endings):
+        return False
+    return True
+
+
+def unknown_name_confidence(value: str, text: str, start: int, end: int) -> float:
+    line_start = text.rfind("\n", 0, start) + 1
+    line_end = text.find("\n", end)
+    if line_end == -1:
+        line_end = len(text)
+    upper_line = text[line_start:line_end].upper()
+    if "'" in value:
+        return 0.72
+    if any(word in upper_line for word in UNKNOWN_NAME_CONTEXT_WORDS):
+        return 0.68
+    return 0.58
 
 
 def scan_watchlist_names(
