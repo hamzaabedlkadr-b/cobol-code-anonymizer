@@ -186,7 +186,7 @@ def suggested_replacement(group: ValueGroup, index: int, salt: str) -> str:
         if len(compact) == 7:
             prefix = "567"[int(digest(seed, salt + ":matricola-prefix"), 16) % 3]
             return prefix + digits_from_hash(seed, salt + ":matricola", 6)
-        return digits_from_hash(seed, salt + ":matricola", 6)
+        return digits_from_hash(seed, salt + ":matricola", len(compact))
     return f"ANON_{index:03d}"
 
 

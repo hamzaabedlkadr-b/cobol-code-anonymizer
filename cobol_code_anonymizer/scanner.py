@@ -70,8 +70,8 @@ MATRICOLA_STOP_VALUES = {
     "ZEROS",
 }
 
-# Company matricola format: six digits, optionally prefixed by 5, 6, or 7.
-MATRICOLA_VALUE = r"[567]?\d{6}"
+# Company matricola format: five or six digits, or seven starting with 5, 6, or 7.
+MATRICOLA_VALUE = r"(?:[567][0-9]{6}|[0-9]{5,6})"
 MATRICOLA_MOVE_RE = re.compile(
     rf"\bMOVE\s+['\"]?(?P<value>{MATRICOLA_VALUE})(?![A-Z0-9])['\"]?\s+TO\s+"
     rf"[\w-]*(?:{'|'.join(re.escape(label) for label in MATRICOLA_LABELS)})[\w-]*\b",
@@ -369,7 +369,7 @@ def load_names(
             continue
         for line in read_text(path).splitlines():
             value = " ".join(line.strip().split())
-            if value and not value.startswith("#"):
+            if value and not value.startswith("#") and not value.isdecimal():
                 names.add(value)
     return sorted(names, key=lambda value: (-len(value), value.upper()))
 
@@ -614,6 +614,13 @@ def scan_path(
         compile_name_regex(roster_names, min_single_token_length=2) if "NAME" in selected else None
     )
     roster_matricula_values = set(roster_matriculas)
+    # Numeric watchlist entries are employee identifiers, never person names.
+    for watchlist_path in extra_watchlists or []:
+        if watchlist_path.exists():
+            roster_matricula_values.update(
+                value.strip() for value in read_text(watchlist_path).splitlines()
+                if MATRICOLA_VALUE_RE.fullmatch(value.strip())
+            )
     if employee_rosters:
         diag.append(
             "Loaded employee roster entries: "
@@ -625,7 +632,7 @@ def scan_path(
         else None
     )
     findings: list[Finding] = []
-    roster_paths = {path.resolve() for path in employee_rosters or []}
+    roster_paths = {path.resolve() for path in [*(employee_rosters or []), *(extra_watchlists or [])]}
     for path in iter_text_files(input_path, skip_root=skip_root):
         if path.resolve() in roster_paths:
             continue

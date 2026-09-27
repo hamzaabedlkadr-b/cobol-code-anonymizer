@@ -126,7 +126,7 @@ def build_parser() -> argparse.ArgumentParser:
         action="append",
         type=Path,
         default=[],
-        help="Extra text file with one name/surname per line. Can be used multiple times.",
+        help="Extra text file with one name/surname or numeric matricola per line. Can be used multiple times.",
     )
     parser.add_argument(
         "--employee-roster",
@@ -269,6 +269,8 @@ def choose_replacements(
     print("\nChoose replacements.")
     print("Press Enter to use the suggestion, type your own value, or type 'skip' to leave it unchanged.")
 
+    print("Type 'all' to accept all remaining suggestions, or 'skip-all' to leave all remaining values unchanged.")
+
     for index, group in enumerate(groups, start=1):
         suggestion = loaded_mapping.get(group.key) or suggested_replacement(group, index, salt)
         if auto:
@@ -285,6 +287,11 @@ def choose_replacements(
             interactive = False
             answer = ""
 
+        if answer.lower() == "skip-all":
+            break
+        if answer.lower() == "all":
+            auto = True
+            answer = ""
         if answer.lower() in {"skip", "s"}:
             continue
         replacements[group.key] = answer or suggestion

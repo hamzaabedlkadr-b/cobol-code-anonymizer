@@ -10,7 +10,7 @@ It scans for:
 - IBAN values
 - Email addresses
 - Italian codice fiscale values
-- Matricola / employee identifiers near fields like `MATRICOLA`, `CODDIP`, `COD-DIP`, `CODICE-DIPENDENTE`, using the format `[567]?[0-9]{6}`
+- Matricola / employee identifiers near fields like `MATRICOLA`, `CODDIP`, `COD-DIP`, `CODICE-DIPENDENTE`, using five or six digits, or seven digits starting with `5`, `6`, or `7`
 - Phone numbers when they appear near labels like `TEL`, `TELEFONO`, `PHONE`, `CELL`
 
 The tool writes anonymized copies to a new output folder. It does not modify the original files.
@@ -33,7 +33,7 @@ The command prints the values it found and asks what to replace each one with:
 3/5 IBAN 'IT60X0542811101000000123456' [IT05I8806934850742747220794]:
 ```
 
-Press `Enter` to accept the suggestion, type your own replacement, or type `skip` to leave that value unchanged.
+Press `Enter` to accept the suggestion, type your own replacement, or type `skip` to leave that value unchanged. Type `all` to accept the current and all remaining suggestions without further prompts. Type `skip-all` to leave the current and all remaining values unchanged, keeping any replacements already chosen. To accept suggestions from the start, use `--auto`.
 
 ## Presidio And spaCy
 
@@ -182,7 +182,7 @@ The package includes a large Italian first-name and surname watchlist. You can a
 python -m cobol_code_anonymizer C:\path\to\cobol-folder --watchlist my_names.txt
 ```
 
-Use one name or surname per line.
+Use one name or surname per line. Numeric matricole in this file are classified as identifiers rather than names. Supported matricole have five or six digits, or seven digits starting with `5`, `6`, or `7`; their generated replacements preserve the digit count (a five-digit original such as `00058` gets a five-digit replacement). With numeric entries present, other matching numbers are reported as `SUSPECTED_MATRICOLA`.
 
 ## Company Roster Watchlist
 
