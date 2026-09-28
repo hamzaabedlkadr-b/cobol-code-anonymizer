@@ -249,6 +249,39 @@ ROSTER_FIELD_STOPWORDS = {
     "LASTNAME",
 }
 
+# Honorifics that appear in HR exports but are not part of the name itself.
+ROSTER_TITLES = {
+    "DOTT",
+    "DOTTSSA",
+    "SSA",
+    "DR",
+    "DRSSA",
+    "ING",
+    "AVV",
+    "RAG",
+    "SIG",
+    "SIGRA",
+    "SIGNOR",
+    "SIGNORA",
+    "PROF",
+    "GEOM",
+    "ARCH",
+    "CAV",
+}
+
+# Italian surname particles bind to the token that follows them, so
+# "De Luca Maria" is a two-part name, not a three-part one.
+SURNAME_PARTICLES = {
+    "DE", "DEL", "DELL", "DELLA", "DELLE", "DELLO", "DEGLI", "DEI",
+    "DI", "DA", "DAL", "DALLA", "DALLE", "DALLO",
+    "LO", "LA", "LI", "LE", "SAN", "SANTA", "SANT",
+    "VAN", "VON", "MC", "MAC", "O",
+}
+
+# Letters, plus apostrophes/hyphens *inside* a token: D'Amico and Jean-Pierre
+# are one name token each, never two.
+ROSTER_TOKEN_RE = re.compile(r"[^\W\d_](?:['’\-]?[^\W\d_])*", re.UNICODE)
+
 
 @dataclass(frozen=True)
 class Finding:
@@ -400,13 +433,39 @@ def parse_employee_roster_line(line: str) -> tuple[set[str], set[str]]:
 
     without_ids = re.sub(rf"(?<![A-Z0-9]){MATRICOLA_VALUE}(?![A-Z0-9])", " ", line, flags=re.IGNORECASE)
     without_email = re.sub(EMAIL_RE, " ", without_ids)
-    tokens = re.findall(r"[^\W\d_][^\W\d_'-]*", without_email, flags=re.UNICODE)
-    tokens = [token for token in tokens if token.upper().replace("-", "") not in ROSTER_FIELD_STOPWORDS]
+    tokens = ROSTER_TOKEN_RE.findall(without_email)
+    tokens = [
+        token
+        for token in tokens
+        if token.upper().replace("-", "").replace("'", "").replace("’", "")
+        not in ROSTER_FIELD_STOPWORDS | ROSTER_TITLES
+    ]
     if not tokens:
         return set(), matriculas
 
-    names = roster_name_variants(tokens)
+    names = roster_name_variants(glue_surname_particles(tokens))
     return names, matriculas
+
+
+def glue_surname_particles(tokens: list[str]) -> list[str]:
+    """Join Italian surname particles to the token they belong to.
+
+    ["De", "Luca", "Maria"] -> ["De Luca", "Maria"], so the name has two parts
+    and both orderings can be generated. Without this, a roster line written
+    surname-first never matches source text written given-name-first.
+    """
+    glued: list[str] = []
+    index = 0
+    while index < len(tokens):
+        token = tokens[index]
+        key = token.upper().rstrip("'’")
+        if key in SURNAME_PARTICLES and index + 1 < len(tokens):
+            glued.append(f"{token} {tokens[index + 1]}")
+            index += 2
+        else:
+            glued.append(token)
+            index += 1
+    return glued
 
 
 def roster_name_variants(tokens: list[str]) -> set[str]:
@@ -417,7 +476,13 @@ def roster_name_variants(tokens: list[str]) -> set[str]:
     names = {name}
     if len(tokens) == 2:
         names.add(f"{tokens[1]} {tokens[0]}")
-    if len(tokens[0]) > 2:
+        # A roster may be written either way round; without both initial forms,
+        # one orientation silently fails to match.
+        if len(tokens[0]) > 2:
+            names.add(f"{tokens[0][0]} {tokens[1]}")
+        if len(tokens[1]) > 2:
+            names.add(f"{tokens[1][0]} {tokens[0]}")
+    elif len(tokens[0]) > 2:
         names.add(" ".join([tokens[0][0], *tokens[1:]]))
     return names
 
@@ -446,11 +511,21 @@ def name_pattern(name: str, min_single_token_length: int) -> str | None:
 
     escaped_tokens = []
     for token in tokens:
-        escaped = re.escape(token)
+        escaped = escape_name_token(token)
         if len(token) == 1:
             escaped += r"\.?"
         escaped_tokens.append(escaped)
     return r"\s+".join(escaped_tokens)
+
+
+def escape_name_token(token: str) -> str:
+    """Escape a name token, leaving apostrophes flexible.
+
+    A roster entry written D'Amico must also match the typographic form
+    D’Amico and COBOL's doubled-apostrophe escape D''Amico inside literals.
+    """
+    parts = re.split(r"['’]", token)
+    return r"['’]{1,2}".join(re.escape(part) for part in parts)
 
 
 def name_scan_ranges(text: str, scope: str) -> list[tuple[int, int]]:
@@ -604,6 +679,7 @@ def scan_path(
     use_presidio: bool = True,
     presidio_model: str = "it_core_news_sm",
     diagnostics: list[str] | None = None,
+    name_judge: object | None = None,
 ) -> list[Finding]:
     selected = entities or DEFAULT_ENTITIES
     diag = diagnostics if diagnostics is not None else []
@@ -631,6 +707,15 @@ def scan_path(
         if use_presidio and "NAME" in selected
         else None
     )
+    # Multi-token roster identities the judge is never allowed to reject. Matched
+    # separately against the raw text so protection is anchored to source offsets
+    # and survives merging and overlap resolution.
+    strong_names = [name for name in roster_names if len(name.split()) >= 2]
+    protected_regex = (
+        compile_name_regex(strong_names, min_single_token_length=2)
+        if strong_names and "NAME" in selected
+        else None
+    )
     findings: list[Finding] = []
     roster_paths = {path.resolve() for path in [*(employee_rosters or []), *(extra_watchlists or [])]}
     for path in iter_text_files(input_path, skip_root=skip_root):
@@ -648,6 +733,8 @@ def scan_path(
                 unknown_name_min_length,
                 name_scope,
                 presidio_analyzer=presidio_analyzer,
+                name_judge=name_judge,
+                protected_regex=protected_regex,
             )
         )
     return remove_overlaps(findings)
@@ -664,6 +751,8 @@ def scan_file(
     unknown_name_min_length: int,
     name_scope: str,
     presidio_analyzer: object | None = None,
+    name_judge: object | None = None,
+    protected_regex: re.Pattern[str] | None = None,
 ) -> list[Finding]:
     text = read_text(path)
     rel_file = relative_name(path, input_path)
@@ -708,7 +797,18 @@ def scan_file(
                     min_length=unknown_name_min_length,
                 )
             )
-        findings.extend(remove_overlaps(name_findings))
+        # Judge after overlap removal so no LLM call is spent on a span that is
+        # about to be discarded. The judge only removes, so it cannot create
+        # new overlaps for the final pass in scan_path.
+        name_findings = remove_overlaps(name_findings)
+        if name_judge is not None:
+            protected_ranges = (
+                [match.span() for match in protected_regex.finditer(text)]
+                if protected_regex is not None
+                else []
+            )
+            name_findings = name_judge.filter(name_findings, protected_ranges)
+        findings.extend(name_findings)
 
     return findings
 
