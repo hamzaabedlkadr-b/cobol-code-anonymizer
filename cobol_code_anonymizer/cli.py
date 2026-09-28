@@ -8,6 +8,7 @@ import sys
 from pathlib import Path
 
 from . import __version__
+from .llm import OLLAMA_HOST, OLLAMA_MODEL, OLLAMA_TIMEOUT
 from .replacements import (
     ValueGroup,
     apply_replacements,
@@ -37,6 +38,29 @@ def main(argv: list[str] | None = None) -> int:
     skip_roots = [path for path in (output_dir, report_dir) if path.exists()]
     diagnostics: list[str] = []
 
+    name_judge = None
+    if args.name_judge or args.name_judge_model:
+        from .judge import NameJudge
+
+        judge_model = args.name_judge_model or OLLAMA_MODEL
+        judge_host = args.ollama_host or OLLAMA_HOST
+        judge_timeout = args.llm_timeout if args.llm_timeout is not None else OLLAMA_TIMEOUT
+        name_judge = NameJudge(
+            judge_host,
+            judge_model,
+            timeout=judge_timeout,
+            policy=args.judge_policy,
+        )
+        judge_ok, judge_reason = name_judge.canary_ok()
+        if judge_ok:
+            print(f"Name judge enabled: {judge_model} at {judge_host}")
+        else:
+            # Never continue with a judge that cannot be trusted: a model that
+            # answers the same way to everything looks like it works while
+            # adding nothing, so fall back to keeping every candidate.
+            print(f"Warning: name judge disabled ({judge_reason}). Keeping all name candidates.")
+            name_judge = None
+
     findings = scan_path(
         input_path=input_path,
         entities=entities,
@@ -50,6 +74,7 @@ def main(argv: list[str] | None = None) -> int:
         use_presidio=not args.no_presidio,
         presidio_model=args.presidio_model,
         diagnostics=diagnostics,
+        name_judge=name_judge,
     )
     groups = group_findings(findings)
 
@@ -58,6 +83,60 @@ def main(argv: list[str] | None = None) -> int:
 
     report_dir.mkdir(parents=True, exist_ok=True)
     write_json(report_dir / "anonymization_findings.json", findings)
+
+    if name_judge is not None:
+        judge_path = report_dir / "judge_decisions.json"
+        name_judge.write_decisions(judge_path)
+        rejected = sum(1 for row in name_judge.decisions if row["decision"] == "reject")
+        review_rejected = sum(
+            1 for row in name_judge.decisions if row["decision"] == "review_reject"
+        )
+        marker_rejected = sum(
+            1 for row in name_judge.decisions if row["decision"] == "marker_reject"
+        )
+        instruction_rejected = sum(
+            1 for row in name_judge.decisions if row["decision"] == "instruction_reject"
+        )
+        print(
+            f"\nName judge ({name_judge.policy}): {name_judge.calls} calls, "
+            f"{name_judge.cache_hits} cached, "
+            f"{name_judge.errors} errors, {rejected} candidates rejected, "
+            f"{review_rejected} review-only rejections, "
+            f"{marker_rejected} overridden on person-marker lines, "
+            f"{instruction_rejected} overridden on instruction-like lines."
+        )
+        if rejected:
+            print(f"Rejected candidates were left unanonymized. Review: {judge_path}")
+        if review_rejected:
+            print(
+                "Multi-token review rejections remained anonymized. "
+                f"Review before enabling active rejection: {judge_path}"
+            )
+        if marker_rejected:
+            print(
+                f"{marker_rejected} rejection(s) on lines naming a person were overridden "
+                f"and stayed anonymized. Unexpected volume here can indicate prompt "
+                f"injection in the source: {judge_path}"
+            )
+        if instruction_rejected:
+            print(
+                f"{instruction_rejected} rejection(s) on instruction-like source lines were "
+                f"overridden and stayed anonymized: {judge_path}"
+            )
+        if (
+            not rejected
+            and not review_rejected
+            and not marker_rejected
+            and not instruction_rejected
+            and name_judge.calls
+        ):
+            # Symptom of a model that keeps everything on the cases that matter.
+            # The startup canary only catches total degeneracy, not this.
+            print(
+                f"Warning: the judge rejected nothing across {name_judge.calls} calls, so "
+                f"{name_judge.model} changed no output here. Verify it discriminates "
+                "before trusting it as a precision filter."
+            )
 
     if args.names_only:
         names = [finding for finding in findings if finding.entity_type == "NAME"]
@@ -168,6 +247,41 @@ def build_parser() -> argparse.ArgumentParser:
         "--presidio-model",
         default="it_core_news_sm",
         help="spaCy model used by Microsoft Presidio for Italian PERSON detection.",
+    )
+    parser.add_argument(
+        "--name-judge",
+        action="store_true",
+        help=(
+            "Enable the Ollama name judge using OLLAMA_MODEL and OLLAMA_HOST from llm.py. "
+            "Use --name-judge-model or --ollama-host to override either value for this run."
+        ),
+    )
+    parser.add_argument(
+        "--name-judge-model",
+        help=(
+            "Override the Ollama model configured in llm.py and enable the name judge. "
+            "Judges whether NAME candidates "
+            "are people or ordinary words. Rejections are review-only unless --judge-policy "
+            "active is selected; protected roster names and model failures always stay."
+        ),
+    )
+    parser.add_argument(
+        "--ollama-host",
+        help="Override the Ollama server address configured in llm.py for this run.",
+    )
+    parser.add_argument(
+        "--judge-policy",
+        choices=("conservative", "active"),
+        default="conservative",
+        help=(
+            "How LLM rejections affect findings. conservative keeps and logs every rejection; "
+            "active applies guarded single-token rejections."
+        ),
+    )
+    parser.add_argument(
+        "--llm-timeout",
+        type=float,
+        help="Override the per-request timeout configured in llm.py for this run.",
     )
     parser.add_argument(
         "--create-map",
