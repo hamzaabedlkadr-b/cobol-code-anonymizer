@@ -96,9 +96,18 @@ PHONE_LABEL_RE = re.compile(
     re.IGNORECASE,
 )
 UNKNOWN_NAME_TOKEN_RE = re.compile(
-    r"(?<![\w'])"
+    r"(?<!\w)"
     r"(?P<value>[A-ZÀ-ÖØ-Þ][A-ZÀ-ÖØ-Þ'’]{2,})"
-    r"(?![\w'])"
+    r"(?!\w)"
+)
+UNKNOWN_NAME_WORD_RE = re.compile(
+    r"(?<![\w.-])"
+    r"(?P<value>[^\W\d_]\.|[^\W\d_](?:(?:['’]{1,2}|-)?[^\W\d_])+)"
+    r"(?![\w-])",
+    re.UNICODE,
+)
+QUOTED_LITERAL_RE = re.compile(
+    r"'(?:''|[^'\r\n]){2,160}'|\"[^\"\r\n]{2,160}\""
 )
 
 NAME_STOPWORDS = {
@@ -235,6 +244,27 @@ UNKNOWN_NAME_CONTEXT_WORDS = {
     "SIG.RA",
     "UTENTE",
 }
+UNKNOWN_NAME_PERSON_MARKERS = {
+    "ANALISTA",
+    "AUTHOR",
+    "AUTORE",
+    "CLIENTE",
+    "CONTATTARE",
+    "DIPENDENTE",
+    "FIRMATARIO",
+    "INCARICATO",
+    "NOMINATIVO",
+    "OPERATORE",
+    "REFERENTE",
+    "RESPONSABILE",
+    "UTENTE",
+}
+UNKNOWN_NAME_PERSON_MARKER_RE = re.compile(
+    r"\b(?:" + "|".join(
+        sorted((re.escape(marker) for marker in UNKNOWN_NAME_PERSON_MARKERS), key=len, reverse=True)
+    ) + r")\b",
+    re.IGNORECASE,
+)
 ROSTER_FIELD_STOPWORDS = {
     "ID",
     "EMPLOYEE",
@@ -539,7 +569,7 @@ def name_scan_ranges(text: str, scope: str) -> list[tuple[int, int]]:
             ranges.append((offset, offset + len(line)))
         offset += len(line)
 
-    for match in re.finditer(r"'[^'\r\n]{2,160}'|\"[^\"\r\n]{2,160}\"", text):
+    for match in QUOTED_LITERAL_RE.finditer(text):
         ranges.append((match.start(), match.end()))
 
     return merge_ranges(ranges)
@@ -556,7 +586,7 @@ def unknown_name_scan_ranges(text: str, scope: str) -> list[tuple[int, int]]:
             ranges.append((offset, offset + len(line)))
         offset += len(line)
 
-    for match in re.finditer(r"'[^'\r\n]{2,160}'|\"[^\"\r\n]{2,160}\"", text):
+    for match in QUOTED_LITERAL_RE.finditer(text):
         ranges.append((match.start(), match.end()))
 
     return merge_ranges(ranges)
@@ -983,8 +1013,9 @@ def scan_unknown_name_candidates(
                 continue
             if is_inside_email_or_url(text, start, end):
                 continue
-            value = normalize_unknown_name_token(text[start:end])
-            if not looks_like_unknown_name(value, text, start, end, min_length):
+            value = text[start:end]
+            normalized = normalize_unknown_name_token(value)
+            if not looks_like_unknown_name(normalized, text, start, end, min_length):
                 continue
             line, column = line_column(text, start)
             findings.append(
@@ -996,12 +1027,214 @@ def scan_unknown_name_candidates(
                     end=end,
                     line=line,
                     column=column,
-                    confidence=unknown_name_confidence(value, text, start, end),
+                    confidence=unknown_name_confidence(normalized, text, start, end),
                     context=context_for(text, start, end),
                     source="unknown_name_heuristic",
                 )
             )
+        findings.extend(
+            scan_unknown_name_shapes(
+                text,
+                rel_file,
+                start_range,
+                end_range,
+                min_length,
+            )
+        )
     return remove_overlaps(findings)
+
+
+def scan_unknown_name_shapes(
+    text: str,
+    rel_file: str,
+    start_range: int,
+    end_range: int,
+    min_length: int,
+) -> list[Finding]:
+    """Generate mixed-case candidates without interpreting COBOL identifiers.
+
+    Strong shapes become complete spans. Ordinary adjacent title-case words are
+    emitted separately so the judge can reject either word independently.
+    """
+    segment = text[start_range:end_range]
+    words = [
+        (
+            start_range + match.start("value"),
+            start_range + match.end("value"),
+            match.group("value"),
+        )
+        for match in UNKNOWN_NAME_WORD_RE.finditer(segment)
+    ]
+    spans: set[tuple[int, int]] = set()
+
+    # A person label is strong enough to retain the complete nearby name.
+    for marker in UNKNOWN_NAME_PERSON_MARKER_RE.finditer(segment):
+        marker_end = start_range + marker.end()
+        following = next((index for index, word in enumerate(words) if word[0] >= marker_end), None)
+        if following is None:
+            continue
+        first_start = words[following][0]
+        if not is_name_separator(text[marker_end:first_start], allow_label_punctuation=True):
+            continue
+        selected = []
+        for index in range(following, min(following + 4, len(words))):
+            start, end, value = words[index]
+            if selected and not is_name_separator(text[selected[-1][1]:start]):
+                break
+            if not is_name_component(value):
+                break
+            selected.append((start, end, value))
+        if selected and any(not is_surname_particle(word[2]) for word in selected):
+            spans.add((selected[0][0], selected[-1][1]))
+
+    for index, (start, end, value) in enumerate(words):
+        if is_name_initial(value):
+            initial_span = initial_name_span(text, words, index)
+            if initial_span is not None:
+                spans.add(initial_span)
+
+        if has_distinctive_name_separator(value) and is_title_name_component(value):
+            phrase_start, phrase_end = start, end
+            expanded_left = False
+            if index > 0:
+                previous = words[index - 1]
+                if (
+                    is_title_name_component(previous[2])
+                    and not is_surname_particle(previous[2])
+                    and is_name_separator(text[previous[1]:start])
+                ):
+                    phrase_start = previous[0]
+                    expanded_left = True
+            if not expanded_left and index + 1 < len(words):
+                following = words[index + 1]
+                if (
+                    is_title_name_component(following[2])
+                    and not is_surname_particle(following[2])
+                    and is_name_separator(text[end:following[0]])
+                ):
+                    phrase_end = following[1]
+            spans.add((phrase_start, phrase_end))
+
+        if index + 1 < len(words):
+            following = words[index + 1]
+            if not is_name_separator(text[end:following[0]]):
+                continue
+            if (
+                is_title_name_component(value)
+                and is_title_name_component(following[2])
+                and not is_surname_particle(value)
+                and not is_surname_particle(following[2])
+            ):
+                spans.add((start, end))
+                spans.add((following[0], following[1]))
+
+        if index + 2 < len(words):
+            middle = words[index + 1]
+            following = words[index + 2]
+            if (
+                is_title_name_component(value)
+                and is_surname_particle(middle[2])
+                and is_title_name_component(following[2])
+                and is_name_separator(text[end:middle[0]])
+                and is_name_separator(text[middle[1]:following[0]])
+            ):
+                spans.add((start, following[1]))
+
+    findings = []
+    for start, end in sorted(spans):
+        value = text[start:end]
+        if (
+            name_letter_count(value) < min_length
+            or is_inside_email_or_url(text, start, end)
+        ):
+            continue
+        line, column = line_column(text, start)
+        findings.append(
+            Finding(
+                file=rel_file,
+                entity_type="NAME",
+                text=value,
+                start=start,
+                end=end,
+                line=line,
+                column=column,
+                confidence=0.72,
+                context=context_for(text, start, end),
+                source="unknown_name_shape",
+            )
+        )
+    return findings
+
+
+def is_name_separator(value: str, allow_label_punctuation: bool = False) -> bool:
+    allowed = r"\s*" if not allow_label_punctuation else r"[\s:;,=-]*"
+    return bool(re.fullmatch(allowed, value))
+
+
+def name_letter_count(value: str) -> int:
+    return sum(char.isalpha() for char in value)
+
+
+def normalized_name_word(value: str) -> str:
+    return value.rstrip(".").replace("’", "'").replace("''", "'")
+
+
+def is_name_initial(value: str) -> bool:
+    return len(value) == 2 and value[0].isupper() and value[0].isalpha() and value[1] == "."
+
+
+def is_surname_particle(value: str) -> bool:
+    return normalized_name_word(value).upper() in SURNAME_PARTICLES
+
+
+def is_title_name_component(value: str) -> bool:
+    if is_name_initial(value):
+        return True
+    normalized = normalized_name_word(value)
+    upper = normalized.upper()
+    if (
+        upper in UNKNOWN_NAME_STOPWORDS
+        or upper in UNKNOWN_NAME_CONTEXT_WORDS
+        or upper in UNKNOWN_NAME_PERSON_MARKERS
+    ):
+        return False
+    parts = re.split(r"['-]", normalized)
+    return bool(parts) and all(part and part[0].isupper() for part in parts) and any(
+        char.islower() for char in normalized
+    )
+
+
+def is_name_component(value: str) -> bool:
+    return is_title_name_component(value) or is_surname_particle(value)
+
+
+def has_distinctive_name_separator(value: str) -> bool:
+    normalized = normalized_name_word(value)
+    return "'" in normalized or "-" in normalized
+
+
+def initial_name_span(
+    text: str,
+    words: list[tuple[int, int, str]],
+    index: int,
+) -> tuple[int, int] | None:
+    if index + 1 >= len(words):
+        return None
+    initial = words[index]
+    following = words[index + 1]
+    if not is_name_separator(text[initial[1]:following[0]]):
+        return None
+    if is_surname_particle(following[2]) and index + 2 < len(words):
+        surname = words[index + 2]
+        if (
+            is_title_name_component(surname[2])
+            and is_name_separator(text[following[1]:surname[0]])
+        ):
+            return initial[0], surname[1]
+        return None
+    if is_title_name_component(following[2]):
+        return initial[0], following[1]
+    return None
 
 
 def normalize_unknown_name_token(value: str) -> str:
@@ -1029,7 +1262,11 @@ def looks_like_unknown_name(
         return False
     if any(char.isdigit() for char in value):
         return False
-    if upper in UNKNOWN_NAME_STOPWORDS or upper in UNKNOWN_NAME_CONTEXT_WORDS:
+    if (
+        upper in UNKNOWN_NAME_STOPWORDS
+        or upper in UNKNOWN_NAME_CONTEXT_WORDS
+        or upper in UNKNOWN_NAME_PERSON_MARKERS
+    ):
         return False
     if upper.startswith(("PDR", "PDH", "PDC", "SQL", "DFH", "CICS")):
         return False
