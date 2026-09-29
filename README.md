@@ -25,6 +25,61 @@ python -m spacy download it_core_news_sm
 python -m cobol_code_anonymizer C:\path\to\cobol-folder --out-dir C:\path\to\anonymized-output
 ```
 
+## Detection Modes
+
+Use one short flag to select a mode. Leave the flag out for the baseline:
+
+```powershell
+# Baseline: spaCy/Presidio, watchlists, and employee roster
+python -m cobol_code_anonymizer C:\path\to\cobol-folder --employee-roster private_watchlists\company_workers.txt --out-dir anonymized
+
+# LLM extraction only for names
+python -m cobol_code_anonymizer C:\path\to\cobol-folder --employee-roster private_watchlists\company_workers.txt --out-dir anonymized --llm
+
+# Baseline detectors plus LLM extraction
+python -m cobol_code_anonymizer C:\path\to\cobol-folder --employee-roster private_watchlists\company_workers.txt --out-dir anonymized --union
+
+# Union followed by active LLM judging
+python -m cobol_code_anonymizer C:\path\to\cobol-folder --employee-roster private_watchlists\company_workers.txt --out-dir anonymized --judge
+```
+
+Every command shows the findings and asks for replacements unless `--auto`,
+`--scan-only`, or `--names-only` is used. The older explicit forms
+`--mode baseline`, `--mode extraction-only`, `--mode union`, and
+`--mode union-judge` remain supported.
+
+Add `--explain` to any mode to show why each name was retained:
+
+```powershell
+python -m cobol_code_anonymizer C:\path\to\cobol-folder --union --explain
+```
+
+In union mode it reports whether the name came from the LLM extractor, a
+baseline detector, or both. When only a baseline detector found a name, the
+message says that the extractor returned no overlapping name; this is not
+called a rejection because the extractor does not classify negative cases.
+With `--judge`, the explanation also shows explicit judge decisions and the
+reason for candidates removed as common words, places, organizations, or
+technical terms. `--explain` only displays existing decisions and makes no
+additional LLM calls.
+
+`--llm` disables Presidio, all name watchlists, roster-based name matching, and
+the unknown-name heuristic. An employee roster may still be supplied: its
+numeric entries continue to classify matricole, but its names are not used.
+Deterministic IBAN, fiscal-code, email, phone, and matricola detection is
+unchanged in every mode.
+
+The presets use the defaults in `cobol_code_anonymizer\llm.py`:
+
+```python
+NAME_EXTRACT_MODEL = "ministral-3:3b"
+NAME_JUDGE_MODEL = "ministral-3:3b"
+```
+
+Change those two lines once to select the default model for each role. The
+existing `--name-extract-model` and `--name-judge-model` flags remain available
+for one-off comparisons.
+
 The command prints the values it found and asks what to replace each one with:
 
 ```text
@@ -132,6 +187,47 @@ python -m cobol_code_anonymizer C:\path\to\cobol-folder --detect-unknown-names -
 ```
 
 Avoid combining `--detect-unknown-names` with `--auto` until you have reviewed the candidates, because unknown-name detection intentionally favors catching suspicious leftovers over perfect precision.
+
+## Full-LLM Name Extraction
+
+For opt-in direct extraction, use a local Ollama model:
+
+```powershell
+python -m cobol_code_anonymizer C:\path\to\cobol-folder --name-extract --report-dir reports
+```
+
+The extractor reads only the configured name scan ranges, sends chunked JSON records to Ollama, re-anchors every returned name inside the original source text, and writes:
+
+- `reports\extraction_decisions.json`
+- `reports\anonymization_findings.json`
+- name CSV/JSON reports when `--names-only` is used
+
+By default this is additive: extracted names are unioned with Presidio/spaCy, watchlists, unknown-name heuristics, and roster findings. Deterministic structured PII detection for IBAN, fiscal code, email, phone, and matricola is unchanged.
+
+To change models per run:
+
+```powershell
+python -m cobol_code_anonymizer C:\path\to\cobol-folder --name-extract --name-extract-model ministral-3:3b
+```
+
+Extraction and judging can use different models:
+
+```powershell
+python -m cobol_code_anonymizer C:\path\to\cobol-folder --name-extract --name-extract-model ministral-3:3b --name-judge --name-judge-model gemma3:4b-it-qat
+```
+
+To change the defaults once, edit `NAME_EXTRACT_MODEL` and `NAME_JUDGE_MODEL` in
+`cobol_code_anonymizer\llm.py`. Per-run flags still override those defaults
+independently. You can also reuse `--ollama-host`, `--llm-timeout`, and tune
+request size with `--name-extract-chunk-lines`.
+
+Extraction-only thesis/evaluation runs should explicitly disable deterministic name detectors while leaving structured PII enabled:
+
+```powershell
+python -m cobol_code_anonymizer C:\path\to\cobol-folder --name-extract --no-presidio --no-default-name-watchlist --names-only --report-dir reports\extract_only
+```
+
+If an extractor canary, schema, transport, or chunk failure occurs, the run is marked incomplete and exits with code `1`. The findings report and extraction audit are still written, but replacement prompts, mappings, and anonymized files are blocked.
 
 ## CSV Review Workflow
 
