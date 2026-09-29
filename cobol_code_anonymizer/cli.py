@@ -8,7 +8,12 @@ import sys
 from pathlib import Path
 
 from . import __version__
-from .llm import OLLAMA_HOST, OLLAMA_MODEL, OLLAMA_TIMEOUT
+from .llm import (
+    NAME_EXTRACT_MODEL,
+    NAME_JUDGE_MODEL,
+    OLLAMA_HOST,
+    OLLAMA_TIMEOUT,
+)
 from .replacements import (
     ValueGroup,
     apply_replacements,
@@ -22,7 +27,14 @@ from .scanner import DEFAULT_ENTITIES, Finding, scan_path, write_json
 
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
-    args = parser.parse_args(argv)
+    raw_args = list(argv) if argv is not None else sys.argv[1:]
+    args = parser.parse_args(raw_args)
+    apply_mode_preset(args, raw_args)
+    if args.mode == "extraction-only" and args.detect_unknown_names:
+        parser.error(
+            "extraction-only mode cannot be combined with --detect-unknown-names "
+            "because that is a deterministic name detector"
+        )
     input_path = args.input.resolve()
     if not input_path.exists():
         parser.error(f"Input path does not exist: {input_path}")
@@ -37,12 +49,36 @@ def main(argv: list[str] | None = None) -> int:
     report_dir = args.report_dir.resolve() if args.report_dir else output_dir
     skip_roots = [path for path in (output_dir, report_dir) if path.exists()]
     diagnostics: list[str] = []
+    print(f"Mode: {args.mode}")
+
+    name_extractor = None
+    if args.name_extract or args.name_extract_model:
+        from .extractor import NameExtractor
+
+        extract_model = args.name_extract_model or NAME_EXTRACT_MODEL
+        extract_host = args.ollama_host or OLLAMA_HOST
+        extract_timeout = args.llm_timeout if args.llm_timeout is not None else OLLAMA_TIMEOUT
+        name_extractor = NameExtractor(
+            extract_host,
+            extract_model,
+            timeout=extract_timeout,
+            chunk_lines=args.name_extract_chunk_lines,
+        )
+        extract_ok, extract_reason = name_extractor.canary_ok()
+        if not extract_ok:
+            report_dir.mkdir(parents=True, exist_ok=True)
+            audit_path = report_dir / "extraction_decisions.json"
+            name_extractor.write_audit(audit_path)
+            print(f"Error: name extraction startup check failed ({extract_reason}).")
+            print(f"Incomplete extraction audit: {audit_path}")
+            return 1
+        print(f"Name extraction enabled: {extract_model} at {extract_host}")
 
     name_judge = None
     if args.name_judge or args.name_judge_model:
         from .judge import NameJudge
 
-        judge_model = args.name_judge_model or OLLAMA_MODEL
+        judge_model = args.name_judge_model or NAME_JUDGE_MODEL
         judge_host = args.ollama_host or OLLAMA_HOST
         judge_timeout = args.llm_timeout if args.llm_timeout is not None else OLLAMA_TIMEOUT
         name_judge = NameJudge(
@@ -74,7 +110,9 @@ def main(argv: list[str] | None = None) -> int:
         use_presidio=not args.no_presidio,
         presidio_model=args.presidio_model,
         diagnostics=diagnostics,
+        name_extractor=name_extractor,
         name_judge=name_judge,
+        deterministic_names_enabled=args.mode != "extraction-only",
     )
     groups = group_findings(findings)
 
@@ -83,6 +121,20 @@ def main(argv: list[str] | None = None) -> int:
 
     report_dir.mkdir(parents=True, exist_ok=True)
     write_json(report_dir / "anonymization_findings.json", findings)
+
+    extraction_incomplete = False
+    if name_extractor is not None:
+        extraction_path = report_dir / "extraction_decisions.json"
+        name_extractor.write_audit(extraction_path)
+        extraction_incomplete = not name_extractor.complete
+        print(
+            f"\nName extraction: {name_extractor.chunk_calls} calls, "
+            f"{name_extractor.http_attempts} HTTP attempts, "
+            f"{name_extractor.anchored} anchored, "
+            f"{name_extractor.unlocatable} unlocatable, "
+            f"{name_extractor.errors} errors."
+        )
+        print(f"Extraction audit: {extraction_path}")
 
     if name_judge is not None:
         judge_path = report_dir / "judge_decisions.json"
@@ -141,13 +193,27 @@ def main(argv: list[str] | None = None) -> int:
     if args.names_only:
         names = [finding for finding in findings if finding.entity_type == "NAME"]
         print_names_only_report(input_path, names)
+        if args.explain:
+            print_name_explanations(names, name_extractor, name_judge)
         write_json(report_dir / "names_findings.json", names)
         write_names_csv(report_dir / "names_findings.csv", names)
         print(f"\nNames JSON: {report_dir / 'names_findings.json'}")
         print(f"Names CSV: {report_dir / 'names_findings.csv'}")
+        if extraction_incomplete:
+            print("\nINCOMPLETE: extraction coverage failed; these reports are diagnostic only.")
+            return 1
         return 0
 
     print_scan_summary(input_path, findings, groups)
+    if args.explain:
+        print_name_explanations(findings, name_extractor, name_judge)
+
+    if extraction_incomplete:
+        print(
+            "\nINCOMPLETE: one or more extraction chunks failed. "
+            "No mapping or anonymized output was created."
+        )
+        return 1
 
     loaded_mapping = load_mapping(args.map_file.resolve() if args.map_file else None)
     if args.create_map:
@@ -186,6 +252,41 @@ def build_parser() -> argparse.ArgumentParser:
         description="Scan COBOL, copybook, and JCL files for names and identifiers, then anonymize reviewed values.",
     )
     parser.add_argument("input", type=Path, help="Input .cbl/.cpy/.jcl file or folder.")
+    mode_group = parser.add_mutually_exclusive_group()
+    mode_group.add_argument(
+        "--mode",
+        choices=("baseline", "extraction-only", "union", "union-judge"),
+        default=None,
+        help=(
+            "Name-detection preset (default: baseline). extraction-only uses only the "
+            "LLM for names; union adds LLM extraction; union-judge also enables the "
+            "active LLM judge. Individual model and runtime flags remain available."
+        ),
+    )
+    mode_group.add_argument(
+        "--llm",
+        action="store_true",
+        help=(
+            "Extraction-only shortcut: use the default LLM to find names, while "
+            "keeping deterministic structured-PII detection and replacement prompts."
+        ),
+    )
+    mode_group.add_argument(
+        "--union",
+        action="store_true",
+        help=(
+            "Union shortcut: combine spaCy/Presidio, watchlists, the employee roster, "
+            "and default LLM name extraction."
+        ),
+    )
+    mode_group.add_argument(
+        "--judge",
+        action="store_true",
+        help=(
+            "Judge shortcut: run union mode, then let the default LLM judge actively "
+            "filter name candidates before replacement prompts."
+        ),
+    )
     parser.add_argument("--out-dir", type=Path, help="Folder for anonymized copies.")
     parser.add_argument("--report-dir", type=Path, help="Folder for anonymization_findings.json.")
     parser.add_argument(
@@ -252,9 +353,27 @@ def build_parser() -> argparse.ArgumentParser:
         "--name-judge",
         action="store_true",
         help=(
-            "Enable the Ollama name judge using OLLAMA_MODEL and OLLAMA_HOST from llm.py. "
+            "Enable the Ollama name judge using NAME_JUDGE_MODEL and OLLAMA_HOST from llm.py. "
             "Use --name-judge-model or --ollama-host to override either value for this run."
         ),
+    )
+    parser.add_argument(
+        "--name-extract",
+        action="store_true",
+        help=(
+            "Enable direct Ollama name extraction using NAME_EXTRACT_MODEL from llm.py. "
+            "Use --name-extract-model to choose a different model for this run."
+        ),
+    )
+    parser.add_argument(
+        "--name-extract-model",
+        help="Ollama model used for direct name extraction; also enables extraction.",
+    )
+    parser.add_argument(
+        "--name-extract-chunk-lines",
+        type=extraction_chunk_size,
+        default=25,
+        help="Maximum scoped records per extraction request (default: 25, minimum: 2).",
     )
     parser.add_argument(
         "--name-judge-model",
@@ -295,9 +414,55 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--scan-only", action="store_true", help="Only scan and write findings JSON.")
     parser.add_argument("--auto", action="store_true", help="Accept suggested replacements without prompts.")
+    parser.add_argument(
+        "--explain",
+        action="store_true",
+        help=(
+            "Show which detector found each name and, when enabled, how the LLM "
+            "extractor and judge handled it. This makes no additional LLM calls."
+        ),
+    )
     parser.add_argument("--salt", default="cobol-code-anonymizer", help="Salt for deterministic suggestions.")
     parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
     return parser
+
+
+def apply_mode_preset(args: argparse.Namespace, argv: list[str]) -> None:
+    """Expand a short mode name into the existing low-level CLI settings."""
+    if args.llm:
+        args.mode = "extraction-only"
+    elif args.union:
+        args.mode = "union"
+    elif args.judge:
+        args.mode = "union-judge"
+    elif args.mode is None:
+        args.mode = "baseline"
+
+    if args.mode == "extraction-only":
+        args.name_extract = True
+        args.no_presidio = True
+        args.no_default_name_watchlist = True
+    elif args.mode == "union":
+        args.name_extract = True
+    elif args.mode == "union-judge":
+        args.name_extract = True
+        args.name_judge = True
+        policy_was_explicit = any(
+            item == "--judge-policy" or item.startswith("--judge-policy=")
+            for item in argv
+        )
+        if not policy_was_explicit:
+            args.judge_policy = "active"
+
+
+def extraction_chunk_size(value: str) -> int:
+    try:
+        parsed = int(value)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError("must be an integer") from exc
+    if parsed < 2:
+        raise argparse.ArgumentTypeError("must be at least 2")
+    return parsed
 
 
 def default_output_dir(input_path: Path) -> Path:
@@ -335,6 +500,121 @@ def print_names_only_report(input_path: Path, findings: list[Finding]) -> None:
             f"{finding.text} | {folder} | {finding.file} | "
             f"{finding.line} | {finding.column} | {finding.source or 'unknown'}"
         )
+
+
+SOURCE_LABELS = {
+    "presidio_spacy": "spaCy/Presidio",
+    "watchlist": "name watchlist",
+    "employee_roster": "employee roster",
+    "unknown_name_heuristic": "unknown-name heuristic",
+    "llm_extraction": "LLM extractor",
+    "mixed": "multiple baseline detectors",
+}
+
+JUDGE_REASON_LABELS = {
+    "common_word": "common word",
+    "place": "place",
+    "organization": "organization",
+    "technical_term": "technical term",
+}
+
+
+def print_name_explanations(
+    findings: list[Finding],
+    name_extractor: object | None,
+    name_judge: object | None,
+) -> None:
+    names = [finding for finding in findings if finding.entity_type == "NAME"]
+    decisions = list(getattr(name_judge, "decisions", [])) if name_judge is not None else []
+    if not names and not decisions:
+        print("\nName explanations: no name candidates were retained or rejected.")
+        return
+
+    comparisons = (
+        list(getattr(name_extractor, "comparisons", []))
+        if name_extractor is not None
+        else []
+    )
+    decision_by_location = {
+        (row["file"], row["line"], row["column"], row["text"]): row
+        for row in decisions
+    }
+
+    print("\nName explanations:")
+    for finding in names:
+        matching_extractions = [
+            row for row in comparisons
+            if row.get("status") in {"agreement", "extractor_only"}
+            and row.get("file") == finding.file
+            and int(row.get("start", -1)) < finding.end
+            and finding.start < int(row.get("end", -1))
+        ]
+        detector_sources = {
+            source
+            for row in matching_extractions
+            for source in row.get("detector_sources", [])
+            if source
+        }
+        if finding.source and finding.source != "llm_extraction":
+            detector_sources.add(finding.source)
+
+        if matching_extractions and detector_sources:
+            found_by = "LLM extractor + " + format_sources(detector_sources)
+        elif matching_extractions or finding.source == "llm_extraction":
+            found_by = "LLM extractor only"
+        elif name_extractor is not None:
+            found_by = (
+                f"{format_sources(detector_sources)} only; LLM returned no overlapping name "
+                "(not a rejection)"
+            )
+        else:
+            found_by = format_sources(detector_sources)
+
+        location = (finding.file, finding.line, finding.column, finding.text)
+        judge_note = format_judge_decision(decision_by_location.get(location))
+        suffix = f"; {judge_note}" if judge_note else ""
+        print(
+            f"  {finding.file}:{finding.line}:{finding.column} "
+            f"{finding.text!r} -> {found_by}{suffix}"
+        )
+
+    rejected = [row for row in decisions if row.get("decision") == "reject"]
+    if rejected:
+        print("\nRemoved by the LLM judge:")
+        for row in rejected:
+            reason = JUDGE_REASON_LABELS.get(str(row.get("reason_code", "")), "not a person name")
+            print(
+                f"  {row['file']}:{row['line']}:{row['column']} "
+                f"{row['text']!r} -> rejected as {reason}"
+            )
+
+
+def format_sources(sources: set[str]) -> str:
+    if not sources:
+        return "baseline detector"
+    return " + ".join(sorted(SOURCE_LABELS.get(source, source) for source in sources))
+
+
+def format_judge_decision(row: dict[str, object] | None) -> str:
+    if row is None:
+        return ""
+    decision = str(row.get("decision", ""))
+    reason = JUDGE_REASON_LABELS.get(str(row.get("reason_code", "")), "not a person name")
+    if row.get("error"):
+        return "judge failed, so the candidate was safely kept"
+    if decision == "keep":
+        return "judge classified it as a person name"
+    if decision == "uncertain":
+        return "judge was uncertain, so it was kept"
+    if decision == "protected":
+        return "judge was not called because the roster protects it"
+    if decision == "review_reject":
+        return f"judge suggested {reason}, but the safety policy kept it"
+    if decision == "marker_reject":
+        return f"judge suggested {reason}, but the person marker protected it"
+    if decision == "instruction_reject":
+        return f"judge suggested {reason}, but instruction-like text protected it"
+    return ""
 
 
 def write_names_csv(path: Path, findings: list[Finding]) -> None:
