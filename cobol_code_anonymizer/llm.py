@@ -10,11 +10,17 @@ from dataclasses import dataclass
 from typing import Any
 
 
-# Project-wide Ollama defaults. Edit these values to change the judge used by
-# `--name-judge`; CLI options can still override them for individual runs.
+# Project-wide Ollama defaults. Edit the two model values independently to
+# choose what the extraction and judge presets use. CLI options still override
+# either value for an individual run.
 OLLAMA_HOST = "http://127.0.0.1:11434"
-OLLAMA_MODEL = "ministral-3:3b"
+NAME_EXTRACT_MODEL = "ministral-3:3b"
+NAME_JUDGE_MODEL = "ministral-3:3b"
 OLLAMA_TIMEOUT = 60.0
+
+# Backward-compatible alias for integrations that imported the old shared
+# model constant. New code should use the mode-specific constants above.
+OLLAMA_MODEL = NAME_EXTRACT_MODEL
 
 
 @dataclass(frozen=True)
@@ -25,6 +31,8 @@ class LlmJsonResult:
     schema_ok: bool
     error: str = ""
     retried: bool = False
+    prompt_tokens: int = 0
+    completion_tokens: int = 0
 
 
 def call_ollama_json(
@@ -52,6 +60,8 @@ def call_ollama_json(
             schema_ok=retry.schema_ok,
             error=retry.error,
             retried=True,
+            prompt_tokens=result.prompt_tokens + retry.prompt_tokens,
+            completion_tokens=result.completion_tokens + retry.completion_tokens,
         )
         retries_left -= 1
     return result
@@ -108,6 +118,8 @@ def _call_ollama_json_once(
         content=content,
         latency_s=time.monotonic() - start,
         schema_ok=schema_ok,
+        prompt_tokens=int(raw.get("prompt_eval_count", 0) or 0),
+        completion_tokens=int(raw.get("eval_count", 0) or 0),
     )
 
 

@@ -23,7 +23,7 @@ import json
 import re
 from pathlib import Path
 
-from .llm import OLLAMA_HOST, OLLAMA_MODEL, OLLAMA_TIMEOUT, call_ollama_json
+from .llm import NAME_JUDGE_MODEL, OLLAMA_HOST, OLLAMA_TIMEOUT, call_ollama_json
 from .scanner import Finding
 
 DECISION_SCHEMA = {
@@ -210,7 +210,7 @@ class NameJudge:
     def __init__(
         self,
         host: str = OLLAMA_HOST,
-        model: str = OLLAMA_MODEL,
+        model: str = NAME_JUDGE_MODEL,
         timeout: float = OLLAMA_TIMEOUT,
         policy: str = "conservative",
     ) -> None:

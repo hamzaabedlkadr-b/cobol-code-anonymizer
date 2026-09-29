@@ -710,14 +710,22 @@ def scan_path(
     presidio_model: str = "it_core_news_sm",
     diagnostics: list[str] | None = None,
     name_judge: object | None = None,
+    name_extractor: object | None = None,
+    deterministic_names_enabled: bool = True,
 ) -> list[Finding]:
     selected = entities or DEFAULT_ENTITIES
     diag = diagnostics if diagnostics is not None else []
     roster_names, roster_matriculas = load_employee_rosters(employee_rosters)
-    names = load_names(extra_watchlists, include_default=include_default_names)
+    names = (
+        load_names(extra_watchlists, include_default=include_default_names)
+        if deterministic_names_enabled
+        else []
+    )
     name_regex = compile_name_regex(names) if "NAME" in selected else None
     roster_name_regex = (
-        compile_name_regex(roster_names, min_single_token_length=2) if "NAME" in selected else None
+        compile_name_regex(roster_names, min_single_token_length=2)
+        if deterministic_names_enabled and "NAME" in selected
+        else None
     )
     roster_matricula_values = set(roster_matriculas)
     # Numeric watchlist entries are employee identifiers, never person names.
@@ -728,13 +736,20 @@ def scan_path(
                 if MATRICOLA_VALUE_RE.fullmatch(value.strip())
             )
     if employee_rosters:
-        diag.append(
-            "Loaded employee roster entries: "
-            f"{len(roster_names)} name variants, {len(roster_matriculas)} matriculas."
-        )
+        if deterministic_names_enabled:
+            diag.append(
+                "Loaded employee roster entries: "
+                f"{len(roster_names)} name variants, {len(roster_matriculas)} matriculas."
+            )
+        else:
+            diag.append(
+                "Extraction-only mode ignored "
+                f"{len(roster_names)} employee-roster name variants and loaded "
+                f"{len(roster_matriculas)} matriculas."
+            )
     presidio_analyzer = (
         build_presidio_analyzer(presidio_model, diag)
-        if use_presidio and "NAME" in selected
+        if deterministic_names_enabled and use_presidio and "NAME" in selected
         else None
     )
     # Multi-token roster identities the judge is never allowed to reject. Matched
@@ -743,7 +758,7 @@ def scan_path(
     strong_names = [name for name in roster_names if len(name.split()) >= 2]
     protected_regex = (
         compile_name_regex(strong_names, min_single_token_length=2)
-        if strong_names and "NAME" in selected
+        if deterministic_names_enabled and strong_names and "NAME" in selected
         else None
     )
     findings: list[Finding] = []
@@ -759,10 +774,11 @@ def scan_path(
                 name_regex,
                 roster_name_regex,
                 roster_matricula_values,
-                detect_unknown_names,
+                detect_unknown_names if deterministic_names_enabled else False,
                 unknown_name_min_length,
                 name_scope,
                 presidio_analyzer=presidio_analyzer,
+                name_extractor=name_extractor,
                 name_judge=name_judge,
                 protected_regex=protected_regex,
             )
@@ -781,6 +797,7 @@ def scan_file(
     unknown_name_min_length: int,
     name_scope: str,
     presidio_analyzer: object | None = None,
+    name_extractor: object | None = None,
     name_judge: object | None = None,
     protected_regex: re.Pattern[str] | None = None,
 ) -> list[Finding]:
@@ -825,6 +842,15 @@ def scan_file(
                     rel_file,
                     name_scope,
                     min_length=unknown_name_min_length,
+                )
+            )
+        if name_extractor is not None:
+            name_findings.extend(
+                name_extractor.extract(
+                    text,
+                    rel_file,
+                    name_scope,
+                    deterministic=list(name_findings),
                 )
             )
         # Judge after overlap removal so no LLM call is spent on a span that is
