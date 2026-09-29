@@ -170,6 +170,52 @@ judge mode it also shows whether the judge kept, protected, was uncertain
 about, or explicitly rejected a candidate. This option uses decisions already
 made during the run, so it does not add LLM calls.
 
+## Copy-Paste Commands
+
+Set only the input, watchlist, and output values. Then run the mode you want.
+Use `--employee-roster` for a company workers file. If your TXT is only an
+extra name list, use `--watchlist` instead.
+
+Linux/macOS:
+
+```bash
+INPUT="/path/to/cobol-folder-or-file"
+WATCHLIST="/path/to/company_workers.txt"
+OUT="/path/to/anonymized"
+
+# 1. Baseline
+python -m cobol_code_anonymizer "$INPUT" --employee-roster "$WATCHLIST" --out-dir "$OUT/baseline"
+
+# 2. LLM extraction only
+python -m cobol_code_anonymizer "$INPUT" --employee-roster "$WATCHLIST" --out-dir "$OUT/llm" --llm
+
+# 3. Union
+python -m cobol_code_anonymizer "$INPUT" --employee-roster "$WATCHLIST" --out-dir "$OUT/union" --union
+
+# 4. Union plus judge
+python -m cobol_code_anonymizer "$INPUT" --employee-roster "$WATCHLIST" --out-dir "$OUT/judge" --judge
+```
+
+Windows PowerShell:
+
+```powershell
+$INPUT = "C:\path\to\cobol-folder-or-file"
+$WATCHLIST = "C:\path\to\company_workers.txt"
+$OUT = "C:\path\to\anonymized"
+
+# 1. Baseline
+python -m cobol_code_anonymizer $INPUT --employee-roster $WATCHLIST --out-dir "$OUT\baseline"
+
+# 2. LLM extraction only
+python -m cobol_code_anonymizer $INPUT --employee-roster $WATCHLIST --out-dir "$OUT\llm" --llm
+
+# 3. Union
+python -m cobol_code_anonymizer $INPUT --employee-roster $WATCHLIST --out-dir "$OUT\union" --union
+
+# 4. Union plus judge
+python -m cobol_code_anonymizer $INPUT --employee-roster $WATCHLIST --out-dir "$OUT\judge" --judge
+```
+
 ## Failure Rules
 
 - An extractor startup failure stops the run and returns exit code `1`.
