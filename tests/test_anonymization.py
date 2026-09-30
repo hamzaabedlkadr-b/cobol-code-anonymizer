@@ -40,7 +40,12 @@ from cobol_code_anonymizer.llm import (
     call_ollama_json,
     validate_json_content,
 )
-from cobol_code_anonymizer.replacements import group_findings, suggested_replacement
+from cobol_code_anonymizer.replacements import (
+    apply_replacements,
+    finding_key,
+    group_findings,
+    suggested_replacement,
+)
 from cobol_code_anonymizer.scanner import (
     Finding, compile_name_regex, parse_employee_roster_line, scan_path,
 )
@@ -146,6 +151,41 @@ class AnonymizationTests(unittest.TestCase):
                 'Analyzing file 2/2: B.CBL',
             ],
         )
+
+    def test_apply_replacements_is_compatible_with_python_39(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            source = root / 'input'
+            output = root / 'output'
+            source.mkdir()
+            changed = source / 'CHANGED.CBL'
+            unchanged = source / 'UNCHANGED.CBL'
+            changed.write_text('      * Mario Rossi\n', encoding='utf-8')
+            unchanged.write_text('       STOP RUN.\n', encoding='utf-8')
+            finding = Finding(
+                file='CHANGED.CBL', entity_type='NAME', text='Mario Rossi',
+                start=8, end=19, line=1, column=9, confidence=1.0,
+                context='      * [[Mario Rossi]]',
+            )
+
+            with patch.object(Path, 'write_text', side_effect=TypeError('unsupported newline')):
+                changed_files, replacement_count = apply_replacements(
+                    source,
+                    output,
+                    [finding],
+                    {finding_key(finding): 'PERSON_001'},
+                )
+
+            self.assertEqual(changed_files, 1)
+            self.assertEqual(replacement_count, 1)
+            self.assertEqual(
+                (output / 'CHANGED.CBL').read_text(encoding='utf-8'),
+                '      * PERSON_001\n',
+            )
+            self.assertEqual(
+                (output / 'UNCHANGED.CBL').read_text(encoding='utf-8'),
+                '       STOP RUN.\n',
+            )
 
     def test_scan_summary_groups_repeated_names_for_display(self):
         findings = [

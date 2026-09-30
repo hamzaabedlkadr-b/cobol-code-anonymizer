@@ -267,7 +267,7 @@ def apply_replacements(
         text = read_text(source)
         file_findings = sorted(by_file.get(rel, []), key=lambda item: item.start, reverse=True)
         if not file_findings:
-            target.write_text(text, encoding="utf-8", newline="")
+            write_output_text(target, text)
             continue
         changed = False
         for finding in file_findings:
@@ -277,7 +277,13 @@ def apply_replacements(
             text = text[: finding.start] + replacement + text[finding.end :]
             changed = True
             replacement_count += 1
-        target.write_text(text, encoding="utf-8", newline="")
+        write_output_text(target, text)
         if changed:
             changed_files += 1
     return changed_files, replacement_count
+
+
+def write_output_text(path: Path, text: str) -> None:
+    """Write anonymized text without newline conversion on Python 3.9+."""
+    with path.open("w", encoding="utf-8", newline="") as handle:
+        handle.write(text)
