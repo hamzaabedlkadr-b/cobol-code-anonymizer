@@ -170,51 +170,153 @@ judge mode it also shows whether the judge kept, protected, was uncertain
 about, or explicitly rejected a candidate. This option uses decisions already
 made during the run, so it does not add LLM calls.
 
+Each LLM mode writes `llm_name_review.csv` in its report/output folder. The
+same file works across all modes:
+
+| CSV value | Meaning |
+|---|---|
+| `agreement` | LLM extractor and baseline found the name |
+| `extractor_only` | Only the LLM extractor found the name |
+| `detector_only` | Only spaCy/watchlist/roster found it; this is not a rejection |
+| `judge_status=reject` | The judge rejected the candidate |
+| `final_action=removed_from_findings` | The rejection was applied; the text is left unchanged |
+| `discarded_unlocatable` | LLM text could not be matched back to the source |
+
+Two readable text files are created automatically:
+
+- `scan_summary.txt` lists every detected name once, with total hits and all locations.
+- `llm_finding.txt` groups LLM results by status and includes the action and reason.
+
+In judge mode, `llm_finding.txt` has `KEEP`, `UNCERTAIN`, `PROTECTED`, and
+`REJECT` sections. In union and extraction-only modes it reports extractor
+evidence instead, because extraction absence is not a rejection decision.
+
 ## Copy-Paste Commands
 
-Set only the input, watchlist, and output values. Then run the mode you want.
-Use `--employee-roster` for a company workers file. If your TXT is only an
-extra name list, use `--watchlist` instead.
+Use the same command every time. Only change the final mode flag.
 
-Linux/macOS:
+First choose your paths:
 
 ```bash
 INPUT="/path/to/cobol-folder-or-file"
-WATCHLIST="/path/to/company_workers.txt"
 OUT="/path/to/anonymized"
-
-# 1. Baseline
-python -m cobol_code_anonymizer "$INPUT" --employee-roster "$WATCHLIST" --out-dir "$OUT/baseline"
-
-# 2. LLM extraction only
-python -m cobol_code_anonymizer "$INPUT" --employee-roster "$WATCHLIST" --out-dir "$OUT/llm" --llm
-
-# 3. Union
-python -m cobol_code_anonymizer "$INPUT" --employee-roster "$WATCHLIST" --out-dir "$OUT/union" --union
-
-# 4. Union plus judge
-python -m cobol_code_anonymizer "$INPUT" --employee-roster "$WATCHLIST" --out-dir "$OUT/judge" --judge
+TXT="/path/to/company_workers_or_names.txt"
 ```
 
-Windows PowerShell:
+`INPUT` can be one `.CBL` file or a folder with many COBOL files.
 
-```powershell
-$INPUT = "C:\path\to\cobol-folder-or-file"
-$WATCHLIST = "C:\path\to\company_workers.txt"
-$OUT = "C:\path\to\anonymized"
+If your TXT is a company workers file, keep:
 
-# 1. Baseline
-python -m cobol_code_anonymizer $INPUT --employee-roster $WATCHLIST --out-dir "$OUT\baseline"
-
-# 2. LLM extraction only
-python -m cobol_code_anonymizer $INPUT --employee-roster $WATCHLIST --out-dir "$OUT\llm" --llm
-
-# 3. Union
-python -m cobol_code_anonymizer $INPUT --employee-roster $WATCHLIST --out-dir "$OUT\union" --union
-
-# 4. Union plus judge
-python -m cobol_code_anonymizer $INPUT --employee-roster $WATCHLIST --out-dir "$OUT\judge" --judge
+```bash
+--employee-roster "$TXT"
 ```
+
+If your TXT is only names or surnames, replace it with:
+
+```bash
+--watchlist "$TXT"
+```
+
+### Baseline
+
+```bash
+python3 -m cobol_code_anonymizer "$INPUT" \
+  --employee-roster "$TXT" \
+  --out-dir "$OUT/baseline" \
+  --report-dir "$OUT/baseline/reports" \
+  --auto
+```
+
+This anonymizes the COBOL files and creates the normal report:
+
+```text
+$OUT/baseline/reports/scan_summary.txt
+```
+
+### LLM Extraction Only
+
+```bash
+python3 -m cobol_code_anonymizer "$INPUT" \
+  --employee-roster "$TXT" \
+  --out-dir "$OUT/llm" \
+  --report-dir "$OUT/llm/reports" \
+  --llm \
+  --auto
+```
+
+This is the same command as baseline, only with `--llm` added.
+
+### Union
+
+```bash
+python3 -m cobol_code_anonymizer "$INPUT" \
+  --employee-roster "$TXT" \
+  --out-dir "$OUT/union" \
+  --report-dir "$OUT/union/reports" \
+  --union \
+  --auto
+```
+
+This is the same command as baseline, only with `--union` added.
+
+### Union Plus Judge
+
+```bash
+python3 -m cobol_code_anonymizer "$INPUT" \
+  --employee-roster "$TXT" \
+  --out-dir "$OUT/judge" \
+  --report-dir "$OUT/judge/reports" \
+  --judge \
+  --auto
+```
+
+This is the same command as baseline, only with `--judge` added.
+
+For LLM modes, the tool also creates:
+
+```text
+$OUT/llm/reports/llm_finding.txt
+$OUT/llm/reports/llm_name_review.csv
+$OUT/llm/reports/extraction_decisions.json
+```
+
+For `--union`, the files are in `$OUT/union/reports`. For `--judge`, they are
+in `$OUT/judge/reports`.
+
+If you do not have a TXT file, remove the `TXT=...` line and remove the
+`--employee-roster "$TXT"` line from the command. Everything else stays the
+same.
+
+On Windows, use `python` instead of `python3`. PowerShell variables look like
+`$INPUT = "C:\path\to\folder"` and can still be used as `$INPUT` in the same
+commands.
+
+`--auto` means the tool does not ask replacement questions. It uses automatic
+replacement values.
+
+## Replacement Map CSV
+
+If you want to create a CSV mapping first:
+
+```bash
+python3 -m cobol_code_anonymizer "$INPUT" \
+  --employee-roster "$TXT" \
+  --create-map "$OUT/replacement_map.csv" \
+  --report-dir "$OUT/reports"
+```
+
+Then anonymize later using that CSV:
+
+```bash
+python3 -m cobol_code_anonymizer "$INPUT" \
+  --employee-roster "$TXT" \
+  --map-file "$OUT/replacement_map.csv" \
+  --out-dir "$OUT/anonymized" \
+  --auto
+```
+
+For a plain name list, use `--watchlist "$TXT"` instead of
+`--employee-roster "$TXT"`.
 
 ## Failure Rules
 
