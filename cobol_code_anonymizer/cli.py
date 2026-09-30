@@ -115,7 +115,7 @@ def main(argv: list[str] | None = None) -> int:
         name_extractor=name_extractor,
         name_judge=name_judge,
         deterministic_names_enabled=args.mode != "extraction-only",
-        progress=print_progress if name_extractor is not None or name_judge is not None else None,
+        progress=print_progress,
     )
     groups = group_findings(findings)
 
