@@ -283,6 +283,9 @@ $OUT/llm/reports/extraction_decisions.json
 For `--union`, the files are in `$OUT/union/reports`. For `--judge`, they are
 in `$OUT/judge/reports`.
 
+During LLM runs, the terminal shows file progress, for example
+`Analyzing file 3/42: PAYROLL.CBL`, so long runs do not look stuck.
+
 If you do not have a TXT file, remove the `TXT=...` line and remove the
 `--employee-roster "$TXT"` line from the command. Everything else stays the
 same.
