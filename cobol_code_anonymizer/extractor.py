@@ -254,6 +254,9 @@ class NameExtractor:
                 "file": rel_file,
                 "chunk": index,
                 "record_ids": [record.record_id for record in chunk],
+                "record_lines": {
+                    str(record.record_id): record.line for record in chunk
+                },
                 "source_lines": sorted({record.line for record in chunk}),
                 "latency_s": result.latency_s,
                 "retried": result.retried,
@@ -460,6 +463,8 @@ class NameExtractor:
                     "file": rel_file,
                     "start": finding.start,
                     "end": finding.end,
+                    "line": finding.line,
+                    "column": finding.column,
                     "text": finding.text,
                     "status": "agreement" if matching else "extractor_only",
                     "detector_sources": sorted({item.source for item in matching}),
@@ -472,6 +477,8 @@ class NameExtractor:
                         "file": rel_file,
                         "start": finding.start,
                         "end": finding.end,
+                        "line": finding.line,
+                        "column": finding.column,
                         "text": finding.text,
                         "status": "detector_only",
                         "detector_sources": [finding.source],

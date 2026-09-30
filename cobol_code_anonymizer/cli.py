@@ -17,7 +17,9 @@ from .llm import (
 from .replacements import (
     ValueGroup,
     apply_replacements,
+    entity_sort_order,
     group_findings,
+    group_key,
     load_mapping,
     suggested_replacement,
     write_mapping_template,
@@ -121,6 +123,14 @@ def main(argv: list[str] | None = None) -> int:
 
     report_dir.mkdir(parents=True, exist_ok=True)
     write_json(report_dir / "anonymization_findings.json", findings)
+    summary_path = report_dir / "scan_summary.txt"
+    write_scan_summary_report(
+        summary_path,
+        args.mode,
+        input_path,
+        findings,
+        diagnostics,
+    )
 
     extraction_incomplete = False
     if name_extractor is not None:
@@ -190,6 +200,19 @@ def main(argv: list[str] | None = None) -> int:
                 "before trusting it as a precision filter."
             )
 
+    if name_extractor is not None or name_judge is not None:
+        review_path = report_dir / "llm_name_review.csv"
+        write_llm_name_review_csv(review_path, name_extractor, name_judge)
+        llm_text_path = report_dir / "llm_finding.txt"
+        write_llm_name_review_text(
+            llm_text_path,
+            args.mode,
+            name_extractor,
+            name_judge,
+        )
+        print(f"LLM name review: {review_path}")
+        print(f"LLM findings text: {llm_text_path}")
+
     if args.names_only:
         names = [finding for finding in findings if finding.entity_type == "NAME"]
         print_names_only_report(input_path, names)
@@ -199,12 +222,14 @@ def main(argv: list[str] | None = None) -> int:
         write_names_csv(report_dir / "names_findings.csv", names)
         print(f"\nNames JSON: {report_dir / 'names_findings.json'}")
         print(f"Names CSV: {report_dir / 'names_findings.csv'}")
+        print(f"Scan summary: {summary_path}")
         if extraction_incomplete:
             print("\nINCOMPLETE: extraction coverage failed; these reports are diagnostic only.")
             return 1
         return 0
 
     print_scan_summary(input_path, findings, groups)
+    print(f"\nScan summary: {summary_path}")
     if args.explain:
         print_name_explanations(findings, name_extractor, name_judge)
 
@@ -474,15 +499,60 @@ def default_output_dir(input_path: Path) -> Path:
 def print_scan_summary(input_path: Path, findings: list[Finding], groups: list[ValueGroup]) -> None:
     print(f"Input: {input_path}")
     print(f"Findings: {len(findings)}")
-    if not groups:
+    display_groups = group_findings_for_summary(findings)
+    if not display_groups:
         return
 
     current_entity = ""
-    for index, group in enumerate(groups, start=1):
+    for index, group in enumerate(display_groups, start=1):
         if group.entity_type != current_entity:
             current_entity = group.entity_type
             print(f"\n[{current_entity}]")
         print(f"  {index:>3}. {group.original}  hits={group.count}  locations={group.locations}")
+
+
+def group_findings_for_summary(findings: list[Finding]) -> list[ValueGroup]:
+    """Group repeated values for display without changing replacement behavior."""
+    groups: dict[tuple[str, str], ValueGroup] = {}
+    for finding in findings:
+        key = group_key(finding.entity_type, finding.text)
+        if key not in groups:
+            groups[key] = ValueGroup(
+                entity_type=finding.entity_type,
+                original=" ".join(finding.text.split()),
+                key=key,
+            )
+        groups[key].findings.append(finding)
+    return sorted(
+        groups.values(),
+        key=lambda group: (entity_sort_order(group.entity_type), group.original.upper()),
+    )
+
+
+def write_scan_summary_report(
+    path: Path,
+    mode: str,
+    input_path: Path,
+    findings: list[Finding],
+    diagnostics: list[str],
+) -> None:
+    """Write the terminal-style grouped findings summary as a text file."""
+    lines = [f"Mode: {mode}"]
+    lines.extend(f"Warning: {message}" for message in diagnostics)
+    lines.extend([f"Input: {input_path}", f"Findings: {len(findings)}"])
+
+    current_entity = ""
+    for index, group in enumerate(group_findings_for_summary(findings), start=1):
+        if group.entity_type != current_entity:
+            current_entity = group.entity_type
+            lines.extend(["", f"[{current_entity}]"])
+        lines.append(
+            f"  {index:>3}. {group.original}  hits={group.count}  "
+            f"locations={group.locations}"
+        )
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
 def print_names_only_report(input_path: Path, findings: list[Finding]) -> None:
@@ -649,6 +719,266 @@ def write_names_csv(path: Path, findings: list[Finding]) -> None:
                     "context": finding.context,
                 }
             )
+
+
+def build_llm_name_review_rows(
+    name_extractor: object | None,
+    name_judge: object | None,
+) -> list[dict[str, object]]:
+    """Build occurrence-level rows shared by the CSV and text reports."""
+    comparisons = list(getattr(name_extractor, "comparisons", []))
+    decisions = list(getattr(name_judge, "decisions", []))
+    decision_by_key = {
+        (
+            str(row.get("file", "")),
+            int(row.get("line", 0)),
+            int(row.get("column", 0)),
+            str(row.get("text", "")),
+        ): row
+        for row in decisions
+    }
+    matched_decisions: set[int] = set()
+    rows: list[dict[str, object]] = []
+
+    for comparison in comparisons:
+        key = (
+            str(comparison.get("file", "")),
+            int(comparison.get("line", 0)),
+            int(comparison.get("column", 0)),
+            str(comparison.get("text", "")),
+        )
+        decision = decision_by_key.get(key)
+        if decision is not None:
+            matched_decisions.add(id(decision))
+        rows.append(llm_review_row(comparison, decision))
+
+    for decision in decisions:
+        if id(decision) not in matched_decisions:
+            rows.append(llm_review_row({}, decision))
+
+    for chunk in list(getattr(name_extractor, "chunks", [])):
+        record_lines = chunk.get("record_lines", {})
+        if not isinstance(record_lines, dict):
+            record_lines = {}
+        for item in chunk.get("unlocatable", []):
+            if not isinstance(item, dict):
+                continue
+            record_id = item.get("record_id")
+            rows.append(
+                {
+                    "name": item.get("text", ""),
+                    "file": chunk.get("file", ""),
+                    "line": record_lines.get(str(record_id), ""),
+                    "column": "",
+                    "extraction_status": "discarded_unlocatable",
+                    "judge_status": "not_judged",
+                    "final_action": "discarded",
+                    "reason": item.get("reason", "could not anchor in source"),
+                    "detector_sources": "",
+                    "context": "",
+                }
+            )
+
+    return rows
+
+
+def write_llm_name_review_csv(
+    path: Path,
+    name_extractor: object | None,
+    name_judge: object | None,
+) -> None:
+    """Write one machine-readable report for all LLM name modes."""
+    rows = build_llm_name_review_rows(name_extractor, name_judge)
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fieldnames = [
+        "name",
+        "file",
+        "line",
+        "column",
+        "extraction_status",
+        "judge_status",
+        "final_action",
+        "reason",
+        "detector_sources",
+        "context",
+    ]
+    with path.open("w", newline="", encoding="utf-8") as handle:
+        writer = csv.DictWriter(handle, fieldnames=fieldnames)
+        writer.writeheader()
+        writer.writerows(rows)
+
+
+def write_llm_name_review_text(
+    path: Path,
+    mode: str,
+    name_extractor: object | None,
+    name_judge: object | None,
+) -> None:
+    """Write grouped LLM name decisions in the terminal summary style."""
+    rows = build_llm_name_review_rows(name_extractor, name_judge)
+    lines = [f"Mode: {mode}", f"LLM findings: {len(rows)}"]
+    if name_judge is not None:
+        lines.append(
+            "REJECT means the judge said the candidate is not a person name; "
+            "check action to see whether the rejection was applied."
+        )
+    else:
+        lines.append(
+            "The extractor finds names but does not reject candidates. "
+            "BASELINE_ONLY means the LLM did not return that name."
+        )
+
+    grouped: dict[tuple[str, str, str, str], dict[str, object]] = {}
+    for row in rows:
+        status = llm_text_status(row)
+        name = " ".join(str(row.get("name", "")).split()) or "<empty output>"
+        action = str(row.get("final_action", ""))
+        reason = llm_text_reason(row)
+        key = (status, name.casefold(), action, reason)
+        group = grouped.setdefault(
+            key,
+            {
+                "status": status,
+                "name": name,
+                "action": action,
+                "reason": reason,
+                "locations": [],
+                "count": 0,
+            },
+        )
+        group["count"] = int(group["count"]) + 1
+        file = str(row.get("file", ""))
+        line = str(row.get("line", ""))
+        location = f"{file}:{line}" if line else file
+        if location and location not in group["locations"]:
+            group["locations"].append(location)
+
+    status_order = {
+        "KEEP": 0,
+        "UNCERTAIN": 1,
+        "PROTECTED": 2,
+        "REJECT": 3,
+        "AGREEMENT": 4,
+        "LLM_ONLY": 5,
+        "BASELINE_ONLY": 6,
+        "DISCARDED": 7,
+        "NOT_JUDGED": 8,
+    }
+    ordered = sorted(
+        grouped.values(),
+        key=lambda group: (
+            status_order.get(str(group["status"]), 99),
+            str(group["name"]).casefold(),
+        ),
+    )
+    current_status = ""
+    section_index = 0
+    for group in ordered:
+        status = str(group["status"])
+        if status != current_status:
+            current_status = status
+            section_index = 0
+            lines.extend(["", f"[{status}]"])
+        section_index += 1
+        locations = ", ".join(str(item) for item in group["locations"]) or "unknown"
+        lines.append(
+            f"  {section_index:>3}. {group['name']}  hits={group['count']}  "
+            f"locations={locations}  action={group['action']}  reason={group['reason']}"
+        )
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
+def llm_text_status(row: dict[str, object]) -> str:
+    judge_status = str(row.get("judge_status", "not_judged"))
+    if judge_status in {"review_reject", "marker_reject", "instruction_reject"}:
+        return "REJECT"
+    if judge_status != "not_judged":
+        return judge_status.upper()
+    extraction_status = str(row.get("extraction_status", "not_available"))
+    return {
+        "agreement": "AGREEMENT",
+        "extractor_only": "LLM_ONLY",
+        "detector_only": "BASELINE_ONLY",
+        "discarded_unlocatable": "DISCARDED",
+    }.get(extraction_status, "NOT_JUDGED")
+
+
+def llm_text_reason(row: dict[str, object]) -> str:
+    judge_status = str(row.get("judge_status", "not_judged"))
+    reason_code = str(row.get("reason", ""))
+    reason = JUDGE_REASON_LABELS.get(reason_code, reason_code or "no reason supplied")
+    if judge_status == "keep":
+        if reason_code:
+            return f"judge error ({reason_code}); candidate was safely kept"
+        return "judge classified it as a person name"
+    if judge_status == "uncertain":
+        return "judge was uncertain, so the candidate was kept"
+    if judge_status == "protected":
+        return "employee roster protection; judge was not called"
+    if judge_status == "reject":
+        return f"judge rejected it as {reason}"
+    if judge_status == "review_reject":
+        return f"judge suggested {reason}; safety policy kept the candidate"
+    if judge_status == "marker_reject":
+        return f"judge suggested {reason}; person marker kept the candidate"
+    if judge_status == "instruction_reject":
+        return f"judge suggested {reason}; instruction-like text kept the candidate"
+
+    extraction_status = str(row.get("extraction_status", "not_available"))
+    sources = str(row.get("detector_sources", "")).replace(";", ", ")
+    if extraction_status == "agreement":
+        return f"found by LLM extractor and baseline ({sources or 'detector'})"
+    if extraction_status == "extractor_only":
+        return "found only by the LLM extractor"
+    if extraction_status == "detector_only":
+        return "found only by baseline; LLM absence is not a rejection"
+    if extraction_status == "discarded_unlocatable":
+        return reason
+    return reason
+
+
+def llm_review_row(
+    comparison: dict[str, object],
+    decision: dict[str, object] | None,
+) -> dict[str, object]:
+    extraction_status = str(comparison.get("status", "not_available"))
+    judge_status = str(decision.get("decision", "not_judged")) if decision else "not_judged"
+    reason_code = str(decision.get("reason_code", "")) if decision else ""
+    error = str(decision.get("error", "")) if decision else ""
+
+    if judge_status == "reject":
+        final_action = "removed_from_findings"
+    elif judge_status in {
+        "keep",
+        "uncertain",
+        "protected",
+        "review_reject",
+        "marker_reject",
+        "instruction_reject",
+    }:
+        final_action = "kept_as_finding"
+    else:
+        final_action = "kept_as_finding"
+
+    source_row = decision or comparison
+    detector_sources = comparison.get("detector_sources", [])
+    if isinstance(detector_sources, list):
+        detector_sources = ";".join(str(source) for source in detector_sources)
+    return {
+        "name": source_row.get("text", ""),
+        "file": source_row.get("file", ""),
+        "line": source_row.get("line", ""),
+        "column": source_row.get("column", ""),
+        "extraction_status": extraction_status,
+        "judge_status": judge_status,
+        "final_action": final_action,
+        "reason": error or reason_code,
+        "detector_sources": detector_sources,
+        "context": decision.get("context", "") if decision else "",
+    }
 
 
 def choose_replacements(
