@@ -124,6 +124,29 @@ class AnonymizationTests(unittest.TestCase):
             [('MATRICOLA', '5123456')],
         )
 
+    def test_scan_path_reports_file_progress(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            (root / 'A.CBL').write_text('      * EMAIL: a@example.com\n')
+            (root / 'B.CBL').write_text('      * EMAIL: b@example.com\n')
+            messages = []
+            findings = scan_path(
+                root,
+                entities={'EMAIL'},
+                include_default_names=False,
+                use_presidio=False,
+                progress=messages.append,
+            )
+
+        self.assertEqual(len(findings), 2)
+        self.assertEqual(
+            messages,
+            [
+                'Analyzing file 1/2: A.CBL',
+                'Analyzing file 2/2: B.CBL',
+            ],
+        )
+
     def test_scan_summary_groups_repeated_names_for_display(self):
         findings = [
             Finding(
@@ -367,6 +390,18 @@ class NameExtractorTests(unittest.TestCase):
         self.assertEqual(extractor.anchored, 2)
         self.assertEqual(extractor.extractor_only, 2)
 
+    def test_extract_reports_progress(self):
+        messages = []
+        text = '      * REFERENTE: Mario Rossi\n'
+        extractor = NameExtractor(chunk_lines=2, progress=messages.append)
+        reply = extraction_result([{'record_id': 1, 'text': 'Mario Rossi'}])
+        with patch('cobol_code_anonymizer.extractor.call_ollama_json', return_value=reply):
+            extractor.extract(text, 'X.CBL', 'context')
+        rendered = '\n'.join(messages)
+        self.assertIn('[LLM extraction] X.CBL: 1 scoped records, 1 LLM chunks', rendered)
+        self.assertIn('[LLM extraction] X.CBL: extraction chunk 1/1', rendered)
+        self.assertIn('[LLM extraction] X.CBL: chunk 1/1 done', rendered)
+
     def test_unknown_record_and_unlocatable_are_discarded_not_fatal(self):
         text = '      * REFERENTE: Mario Rossi\n'
         extractor = NameExtractor(chunk_lines=2)
@@ -561,6 +596,21 @@ class NameJudgeTests(unittest.TestCase):
         self.assertEqual(kept, [])
         self.assertEqual(judge.decisions[0]['decision'], 'reject')
         self.assertEqual(judge.decisions[0]['reason_code'], 'common_word')
+
+    def test_filter_reports_progress(self):
+        messages = []
+        judge = NameJudge(
+            'http://localhost:11434',
+            'any-model:latest',
+            timeout=5.0,
+            policy='active',
+            progress=messages.append,
+        )
+        with patch('urllib.request.urlopen', return_value=judge_replying('reject')):
+            judge.filter([make_finding('CONTI')], [])
+        rendered = '\n'.join(messages)
+        self.assertIn('[LLM judge] reviewing 1 name candidates', rendered)
+        self.assertIn('[LLM judge] candidate 1/1: judging X.CBL:1', rendered)
 
     def test_reject_without_reason_becomes_uncertain(self):
         judge = self.judge()

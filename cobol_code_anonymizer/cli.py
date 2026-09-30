@@ -115,6 +115,7 @@ def main(argv: list[str] | None = None) -> int:
         name_extractor=name_extractor,
         name_judge=name_judge,
         deterministic_names_enabled=args.mode != "extraction-only",
+        progress=print_progress if name_extractor is not None or name_judge is not None else None,
     )
     groups = group_findings(findings)
 
@@ -494,6 +495,10 @@ def default_output_dir(input_path: Path) -> Path:
     if input_path.is_file():
         return input_path.parent / f"{input_path.stem}_anonymized"
     return input_path.parent / f"{input_path.name}_anonymized"
+
+
+def print_progress(message: str) -> None:
+    print(message, flush=True)
 
 
 def print_scan_summary(input_path: Path, findings: list[Finding], groups: list[ValueGroup]) -> None:

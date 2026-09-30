@@ -6,6 +6,7 @@ import json
 import re
 from dataclasses import asdict, dataclass
 from pathlib import Path
+from typing import Callable
 
 
 TEXT_EXTENSIONS = {
@@ -712,6 +713,7 @@ def scan_path(
     name_judge: object | None = None,
     name_extractor: object | None = None,
     deterministic_names_enabled: bool = True,
+    progress: Callable[[str], None] | None = None,
 ) -> list[Finding]:
     selected = entities or DEFAULT_ENTITIES
     diag = diagnostics if diagnostics is not None else []
@@ -763,9 +765,15 @@ def scan_path(
     )
     findings: list[Finding] = []
     roster_paths = {path.resolve() for path in [*(employee_rosters or []), *(extra_watchlists or [])]}
-    for path in iter_text_files(input_path, skip_root=skip_root):
-        if path.resolve() in roster_paths:
-            continue
+    paths = [
+        path for path in iter_text_files(input_path, skip_root=skip_root)
+        if path.resolve() not in roster_paths
+    ]
+    for index, path in enumerate(paths, start=1):
+        if progress is not None:
+            progress(
+                f"Analyzing file {index}/{len(paths)}: {relative_name(path, input_path)}"
+            )
         findings.extend(
             scan_file(
                 path,
