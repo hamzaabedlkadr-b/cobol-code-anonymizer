@@ -22,6 +22,7 @@ from __future__ import annotations
 import json
 import re
 from pathlib import Path
+from typing import Callable
 
 from .llm import NAME_JUDGE_MODEL, OLLAMA_HOST, OLLAMA_TIMEOUT, call_ollama_json
 from .scanner import Finding
@@ -213,6 +214,7 @@ class NameJudge:
         model: str = NAME_JUDGE_MODEL,
         timeout: float = OLLAMA_TIMEOUT,
         policy: str = "conservative",
+        progress: Callable[[str], None] | None = None,
     ) -> None:
         if policy not in JUDGE_POLICIES:
             raise ValueError(f"Unknown judge policy: {policy}")
@@ -220,6 +222,7 @@ class NameJudge:
         self.model = model
         self.timeout = timeout
         self.policy = policy
+        self.progress = progress
         self.decisions: list[dict[str, object]] = []
         self.calls = 0
         self.errors = 0
@@ -241,7 +244,9 @@ class NameJudge:
         scan that follows does not absorb cold-start latency.
         """
         answers = []
-        for context in (*CANARY_PEOPLE, *CANARY_NON_PEOPLE):
+        probes = (*CANARY_PEOPLE, *CANARY_NON_PEOPLE)
+        for index, context in enumerate(probes, start=1):
+            self._progress(f"startup check {index}/{len(probes)}")
             decision = self._ask(context)
             if decision is None:
                 # Stop on the first failure: with a dead server and a 60s
@@ -260,14 +265,26 @@ class NameJudge:
         self, findings: list[Finding], protected_ranges: list[tuple[int, int]]
     ) -> list[Finding]:
         kept: list[Finding] = []
+        name_findings = [finding for finding in findings if finding.entity_type == "NAME"]
+        total_names = len(name_findings)
+        reviewed_names = 0
+        if total_names:
+            self._progress(f"reviewing {total_names} name candidates")
         for finding in findings:
             if finding.entity_type != "NAME":
                 kept.append(finding)
                 continue
+            reviewed_names += 1
             if is_protected(finding, protected_ranges):
+                self._progress(
+                    f"candidate {reviewed_names}/{total_names}: protected {finding.file}:{finding.line}"
+                )
                 self._record(finding, "protected", reason_code="", cached=False, error="")
                 kept.append(finding)
                 continue
+            self._progress(
+                f"candidate {reviewed_names}/{total_names}: judging {finding.file}:{finding.line}"
+            )
             decision, reason_code, cached, error = self._decide(finding)
             effective_decision = decision
             if decision == "reject":
@@ -384,3 +401,7 @@ class NameJudge:
                 "context": finding.context,
             }
         )
+
+    def _progress(self, message: str) -> None:
+        if self.progress is not None:
+            self.progress(f"[LLM judge] {message}")

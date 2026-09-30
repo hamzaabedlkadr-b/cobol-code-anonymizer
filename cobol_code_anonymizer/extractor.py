@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 from dataclasses import asdict, dataclass, replace
 from pathlib import Path
+from typing import Callable
 
 from .llm import (
     NAME_EXTRACT_MODEL,
@@ -169,6 +170,7 @@ class NameExtractor:
         model: str = NAME_EXTRACT_MODEL,
         timeout: float = OLLAMA_TIMEOUT,
         chunk_lines: int = 25,
+        progress: Callable[[str], None] | None = None,
     ) -> None:
         if chunk_lines < 2:
             raise ValueError("chunk_lines must be at least 2")
@@ -176,6 +178,7 @@ class NameExtractor:
         self.model = model
         self.timeout = timeout
         self.chunk_lines = chunk_lines
+        self.progress = progress
         self.complete = True
         self.circuit_open = False
         self.failure_reason = ""
@@ -199,6 +202,7 @@ class NameExtractor:
         self.comparisons: list[dict[str, object]] = []
 
     def canary_ok(self) -> tuple[bool, str]:
+        self._progress("startup check 1/2: positive name probe")
         positive = self._canary_records(CANARY_POSITIVE)
         result = self._call(positive, canary=True)
         if result.error or not result.schema_ok:
@@ -216,6 +220,7 @@ class NameExtractor:
         if not all(spans_cover_name(combined, name, global_spans) for name in CANARY_NAMES):
             return self._fail_canary("positive canary did not completely cover both known names")
 
+        self._progress("startup check 2/2: negative name probe")
         negative = self._canary_records(CANARY_NEGATIVE)
         result = self._call(negative, canary=True)
         if result.error or not result.schema_ok:
@@ -236,6 +241,9 @@ class NameExtractor:
     ) -> list[Finding]:
         records = build_extraction_records(text, scope)
         chunks = chunk_records(records, self.chunk_lines)
+        self._progress(
+            f"{rel_file}: {len(records)} scoped records, {len(chunks)} LLM chunks"
+        )
         if self.circuit_open:
             if records:
                 self.chunks.append(self._skipped_chunk(rel_file, records))
@@ -249,6 +257,10 @@ class NameExtractor:
                 remaining = [record for group in chunks[index - 1 :] for record in group]
                 self.chunks.append(self._skipped_chunk(rel_file, remaining))
                 break
+            line_range = f"lines {chunk[0].line}-{chunk[-1].line}"
+            self._progress(
+                f"{rel_file}: extraction chunk {index}/{len(chunks)} ({line_range})"
+            )
             result = self._call(chunk, canary=False)
             audit: dict[str, object] = {
                 "file": rel_file,
@@ -309,6 +321,10 @@ class NameExtractor:
                 }
             )
             self.chunks.append(audit)
+            self._progress(
+                f"{rel_file}: chunk {index}/{len(chunks)} done, "
+                f"{len(anchored_rows)} anchored, {len(unlocatable)} unlocatable"
+            )
 
         self._compare(rel_file, findings, deterministic or [])
         return findings
@@ -383,6 +399,10 @@ class NameExtractor:
         self.prompt_tokens += result.prompt_tokens
         self.completion_tokens += result.completion_tokens
         return result
+
+    def _progress(self, message: str) -> None:
+        if self.progress is not None:
+            self.progress(f"[LLM extraction] {message}")
 
     @staticmethod
     def _anchor_items(
