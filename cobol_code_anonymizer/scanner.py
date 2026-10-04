@@ -8,6 +8,13 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Callable
 
+from .candidates import (
+    Detection,
+    Occurrence,
+    finding_fields,
+    records_from_finding,
+)
+
 
 TEXT_EXTENSIONS = {
     ".cbl",
@@ -332,6 +339,42 @@ class Finding:
         data.pop("start")
         data.pop("end")
         return data
+
+    def to_candidate_records(
+        self,
+        *,
+        file_sha256: str,
+        detector_version: str,
+        region: str = "unknown",
+        original_start: int | None = None,
+        original_end: int | None = None,
+        matched_entry: str | None = None,
+        variant: str | None = None,
+    ) -> tuple[Occurrence, Detection]:
+        """Represent this finding with the new auditable record types.
+
+        This is a migration adapter only.  It does not change the finding or
+        run any additional detection, judging, overlap, or policy logic.
+        """
+        return records_from_finding(
+            self,
+            file_sha256=file_sha256,
+            detector_version=detector_version,
+            region=region,
+            original_start=original_start,
+            original_end=original_end,
+            matched_entry=matched_entry,
+            variant=variant,
+        )
+
+    @classmethod
+    def from_candidate_records(
+        cls,
+        occurrence: Occurrence,
+        detection: Detection,
+    ) -> "Finding":
+        """Rebuild the unchanged legacy finding after a record round-trip."""
+        return cls(**finding_fields(occurrence, detection))
 
 
 def read_text(path: Path) -> str:
