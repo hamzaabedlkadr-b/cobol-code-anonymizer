@@ -22,6 +22,7 @@ later connected to production scanning.
 
 from __future__ import annotations
 
+from bisect import bisect_right
 import hashlib
 import re
 import string
@@ -101,6 +102,99 @@ class SourceDecodingError(ValueError):
 
 
 @dataclass(frozen=True)
+class DecodedByteOffsetMap:
+    """Map decoded-text boundaries back to original byte boundaries.
+
+    Offsets are half-open boundaries, so both zero and ``decoded_length`` are
+    valid positions.  Single-byte encodings use direct arithmetic.  For UTF-8,
+    only boundaries immediately after multibyte characters are stored; this is
+    much smaller than keeping one Python integer per character in an
+    ASCII-heavy COBOL file.
+
+    ``extra_byte_boundaries`` and ``cumulative_extra_bytes`` are parallel,
+    strictly increasing sequences.  At each stored boundary, the cumulative
+    value records bytes beyond the one-byte-per-character baseline.
+    """
+
+    decoded_length: int
+    original_length: int
+    prefix_byte_count: int
+    extra_byte_boundaries: tuple[int, ...] = ()
+    cumulative_extra_bytes: tuple[int, ...] = ()
+
+    def __post_init__(self) -> None:
+        for field_name, value in (
+            ("decoded_length", self.decoded_length),
+            ("original_length", self.original_length),
+            ("prefix_byte_count", self.prefix_byte_count),
+        ):
+            if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+                raise ValueError(f"{field_name} must be a non-negative integer")
+        if len(self.extra_byte_boundaries) != len(self.cumulative_extra_bytes):
+            raise ValueError("extra-byte map fields must have equal lengths")
+
+        previous_boundary = 0
+        previous_extra = 0
+        for boundary, extra_bytes in zip(
+            self.extra_byte_boundaries,
+            self.cumulative_extra_bytes,
+        ):
+            if (
+                isinstance(boundary, bool)
+                or not isinstance(boundary, int)
+                or boundary <= previous_boundary
+                or boundary > self.decoded_length
+            ):
+                raise ValueError("extra-byte boundaries must be ordered decoded offsets")
+            if (
+                isinstance(extra_bytes, bool)
+                or not isinstance(extra_bytes, int)
+                or extra_bytes <= previous_extra
+            ):
+                raise ValueError("cumulative extra bytes must be strictly increasing")
+            previous_boundary = boundary
+            previous_extra = extra_bytes
+
+        expected_length = (
+            self.prefix_byte_count
+            + self.decoded_length
+            + (self.cumulative_extra_bytes[-1] if self.cumulative_extra_bytes else 0)
+        )
+        if self.original_length != expected_length:
+            raise ValueError("original_length does not agree with the byte-offset map")
+
+    def original_byte_offset(self, decoded_offset: int) -> int:
+        """Return the original byte boundary for one decoded-text boundary."""
+
+        self._validate_decoded_offset(decoded_offset)
+        index = bisect_right(self.extra_byte_boundaries, decoded_offset)
+        extra_bytes = self.cumulative_extra_bytes[index - 1] if index else 0
+        return self.prefix_byte_count + decoded_offset + extra_bytes
+
+    def original_byte_span(
+        self,
+        decoded_start: int,
+        decoded_end: int,
+    ) -> tuple[int, int]:
+        """Map a half-open decoded span to its exact half-open byte span."""
+
+        self._validate_decoded_offset(decoded_start)
+        self._validate_decoded_offset(decoded_end)
+        if decoded_end < decoded_start:
+            raise ValueError("decoded span end must not precede its start")
+        return (
+            self.original_byte_offset(decoded_start),
+            self.original_byte_offset(decoded_end),
+        )
+
+    def _validate_decoded_offset(self, decoded_offset: int) -> None:
+        if isinstance(decoded_offset, bool) or not isinstance(decoded_offset, int):
+            raise ValueError("decoded offset must be an integer")
+        if not 0 <= decoded_offset <= self.decoded_length:
+            raise ValueError("decoded offset is outside the decoded text")
+
+
+@dataclass(frozen=True)
 class DecodedSource:
     """Exact decoded text together with the decoding facts needed later.
 
@@ -112,7 +206,8 @@ class DecodedSource:
     C2/C3 UTF-8 sequences that commonly reveal UTF-8 text embedded inside a
     single-byte fallback. The plausibility gate applies the threshold.
     ``sha256`` always identifies the complete original byte sequence,
-    including any BOM.
+    including any BOM. ``original_byte_map`` maps decoded text positions back
+    to those original bytes without storing a per-character table.
     """
 
     text: str
@@ -121,6 +216,17 @@ class DecodedSource:
     has_bom: bool
     embedded_utf8_multibyte_count: int
     sha256: str
+    original_byte_map: DecodedByteOffsetMap
+
+    def __post_init__(self) -> None:
+        """Reject a manually constructed source whose map does not fit it."""
+
+        if self.has_bom and self.encoding != UTF8:
+            raise ValueError("only UTF-8 source may have a UTF-8 BOM")
+        if self.original_byte_map.decoded_length != len(self.text):
+            raise ValueError("byte-offset map decoded length does not match text")
+        if self.original_byte_map.original_length != len(self.encode()):
+            raise ValueError("byte-offset map original length does not match source")
 
     def encode(self) -> bytes:
         """Encode the current text and restore its original UTF-8 BOM.
@@ -136,6 +242,98 @@ class DecodedSource:
         if self.has_bom:
             return UTF8_BOM + encoded
         return encoded
+
+    def original_byte_offset(self, decoded_offset: int) -> int:
+        """Return the original byte boundary for one decoded-text boundary."""
+
+        return self.original_byte_map.original_byte_offset(decoded_offset)
+
+    def original_byte_span(
+        self,
+        decoded_start: int,
+        decoded_end: int,
+    ) -> tuple[int, int]:
+        """Return the original byte span corresponding to a decoded span."""
+
+        return self.original_byte_map.original_byte_span(decoded_start, decoded_end)
+
+
+def _build_original_byte_map(
+    text: str,
+    encoding: str,
+    *,
+    has_bom: bool,
+) -> DecodedByteOffsetMap:
+    """Build the compact boundary map for one verified decoded source."""
+
+    if encoding not in (UTF8, WINDOWS_1252, LATIN1):
+        raise ValueError(f"unsupported encoding for byte mapping: {encoding}")
+    if has_bom and encoding != UTF8:
+        raise ValueError("only UTF-8 source may have a UTF-8 BOM")
+
+    prefix_byte_count = len(UTF8_BOM) if has_bom else 0
+    if encoding != UTF8:
+        return DecodedByteOffsetMap(
+            decoded_length=len(text),
+            original_length=prefix_byte_count + len(text),
+            prefix_byte_count=prefix_byte_count,
+        )
+
+    boundaries: list[int] = []
+    cumulative_extras: list[int] = []
+    extra_bytes = 0
+    for index, character in enumerate(text):
+        byte_width = len(character.encode(UTF8, errors="strict"))
+        if byte_width > 1:
+            extra_bytes += byte_width - 1
+            boundaries.append(index + 1)
+            cumulative_extras.append(extra_bytes)
+    return DecodedByteOffsetMap(
+        decoded_length=len(text),
+        original_length=prefix_byte_count + len(text) + extra_bytes,
+        prefix_byte_count=prefix_byte_count,
+        extra_byte_boundaries=tuple(boundaries),
+        cumulative_extra_bytes=tuple(cumulative_extras),
+    )
+
+
+def _decoded_source_from_verified_bytes(
+    data: bytes,
+    text: str,
+    encoding: str,
+    *,
+    has_bom: bool,
+    embedded_utf8_multibyte_count: int,
+    sha256: str,
+) -> DecodedSource:
+    """Create a source only when its text, bytes, and boundary map agree."""
+
+    content = data[len(UTF8_BOM) :] if has_bom else data
+    if text.encode(encoding, errors="strict") != content:
+        raise SourceDecodingError(
+            "offset_mapping_mismatch",
+            "decoded text cannot be mapped back to the original source bytes",
+        )
+
+    original_byte_map = _build_original_byte_map(
+        text,
+        encoding,
+        has_bom=has_bom,
+    )
+    if original_byte_map.original_length != len(data):
+        raise SourceDecodingError(
+            "offset_mapping_mismatch",
+            "byte-offset map does not cover the original source bytes",
+        )
+    return DecodedSource(
+        text=text,
+        encoding=encoding,
+        newline_convention=detect_newline_convention(text),
+        has_bom=has_bom,
+        embedded_utf8_multibyte_count=embedded_utf8_multibyte_count,
+        sha256=sha256,
+        original_byte_map=original_byte_map,
+    )
 
 
 def decode_source_bytes(
@@ -193,10 +391,10 @@ def decode_source_bytes(
                 "source has a UTF-8 BOM but contains invalid UTF-8 bytes",
             ) from exc
         _validate_control_character_ratio(content)
-        return DecodedSource(
+        return _decoded_source_from_verified_bytes(
+            data,
             text=text,
             encoding=UTF8,
-            newline_convention=detect_newline_convention(text),
             has_bom=True,
             embedded_utf8_multibyte_count=0,
             sha256=digest,
@@ -221,10 +419,10 @@ def decode_source_bytes(
             )
         else:
             _validate_control_character_ratio(content)
-        return DecodedSource(
+        return _decoded_source_from_verified_bytes(
+            data,
             text=text,
             encoding=encoding,
-            newline_convention=detect_newline_convention(text),
             has_bom=False,
             embedded_utf8_multibyte_count=embedded_utf8_multibyte_count,
             sha256=digest,
@@ -238,10 +436,10 @@ def decode_source_bytes(
         embedded_utf8_multibyte_count,
         require_source_plausibility=require_source_plausibility,
     )
-    return DecodedSource(
+    return _decoded_source_from_verified_bytes(
+        data,
         text=text,
         encoding=LATIN1,
-        newline_convention=detect_newline_convention(text),
         has_bom=False,
         embedded_utf8_multibyte_count=embedded_utf8_multibyte_count,
         sha256=digest,
