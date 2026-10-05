@@ -145,6 +145,8 @@ def main(argv: list[str] | None = None) -> int:
             f"{name_extractor.unlocatable} unlocatable, "
             f"{name_extractor.errors} errors."
         )
+        if extraction_incomplete and name_extractor.failure_reason:
+            print(f"Extraction failure: {name_extractor.failure_reason}")
         print(f"Extraction audit: {extraction_path}")
 
     if name_judge is not None:
@@ -157,8 +159,10 @@ def main(argv: list[str] | None = None) -> int:
         marker_rejected = sum(
             1 for row in name_judge.decisions if row["decision"] == "marker_reject"
         )
-        instruction_rejected = sum(
-            1 for row in name_judge.decisions if row["decision"] == "instruction_reject"
+        instruction_anonymized = sum(
+            1
+            for row in name_judge.decisions
+            if row["decision"] in {"instruction_anonymize", "instruction_reject"}
         )
         print(
             f"\nName judge ({name_judge.policy}): {name_judge.calls} calls, "
@@ -166,7 +170,7 @@ def main(argv: list[str] | None = None) -> int:
             f"{name_judge.errors} errors, {rejected} candidates rejected, "
             f"{review_rejected} review-only rejections, "
             f"{marker_rejected} overridden on person-marker lines, "
-            f"{instruction_rejected} overridden on instruction-like lines."
+            f"{instruction_anonymized} anonymized by the instruction-text policy gate."
         )
         if rejected:
             print(f"Rejected candidates were left unanonymized. Review: {judge_path}")
@@ -181,16 +185,16 @@ def main(argv: list[str] | None = None) -> int:
                 f"and stayed anonymized. Unexpected volume here can indicate prompt "
                 f"injection in the source: {judge_path}"
             )
-        if instruction_rejected:
+        if instruction_anonymized:
             print(
-                f"{instruction_rejected} rejection(s) on instruction-like source lines were "
-                f"overridden and stayed anonymized: {judge_path}"
+                f"{instruction_anonymized} candidate(s) on instruction-like source lines "
+                f"bypassed the judge and stayed anonymized: {judge_path}"
             )
         if (
             not rejected
             and not review_rejected
             and not marker_rejected
-            and not instruction_rejected
+            and not instruction_anonymized
             and name_judge.calls
         ):
             # Symptom of a model that keeps everything on the cases that matter.
@@ -689,6 +693,8 @@ def format_judge_decision(row: dict[str, object] | None) -> str:
         return f"judge suggested {reason}, but the person marker protected it"
     if decision == "instruction_reject":
         return f"judge suggested {reason}, but instruction-like text protected it"
+    if decision == "instruction_anonymize":
+        return "instruction-like source text triggered mandatory anonymization before judging"
     return ""
 
 
@@ -863,12 +869,13 @@ def write_llm_name_review_text(
         "KEEP": 0,
         "UNCERTAIN": 1,
         "PROTECTED": 2,
-        "REJECT": 3,
-        "AGREEMENT": 4,
-        "LLM_ONLY": 5,
-        "BASELINE_ONLY": 6,
-        "DISCARDED": 7,
-        "NOT_JUDGED": 8,
+        "ANONYMIZE": 3,
+        "REJECT": 4,
+        "AGREEMENT": 5,
+        "LLM_ONLY": 6,
+        "BASELINE_ONLY": 7,
+        "DISCARDED": 8,
+        "NOT_JUDGED": 9,
     }
     ordered = sorted(
         grouped.values(),
@@ -900,6 +907,8 @@ def llm_text_status(row: dict[str, object]) -> str:
     judge_status = str(row.get("judge_status", "not_judged"))
     if judge_status in {"review_reject", "marker_reject", "instruction_reject"}:
         return "REJECT"
+    if judge_status == "instruction_anonymize":
+        return "ANONYMIZE"
     if judge_status != "not_judged":
         return judge_status.upper()
     extraction_status = str(row.get("extraction_status", "not_available"))
@@ -931,6 +940,8 @@ def llm_text_reason(row: dict[str, object]) -> str:
         return f"judge suggested {reason}; person marker kept the candidate"
     if judge_status == "instruction_reject":
         return f"judge suggested {reason}; instruction-like text kept the candidate"
+    if judge_status == "instruction_anonymize":
+        return "instruction-text policy gate anonymized the candidate before judging"
 
     extraction_status = str(row.get("extraction_status", "not_available"))
     sources = str(row.get("detector_sources", "")).replace(";", ", ")
@@ -963,6 +974,7 @@ def llm_review_row(
         "review_reject",
         "marker_reject",
         "instruction_reject",
+        "instruction_anonymize",
     }:
         final_action = "kept_as_finding"
     else:
