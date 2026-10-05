@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import time
 import urllib.error
 import urllib.request
@@ -16,11 +17,25 @@ from typing import Any
 OLLAMA_HOST = "http://127.0.0.1:11434"
 NAME_EXTRACT_MODEL = "ministral-3:3b"
 NAME_JUDGE_MODEL = "ministral-3:3b"
+# The verifier is a separate role.  It may initially use the same local model
+# tag, but it receives an independent prompt and never sees the judge answer.
+NAME_VERIFIER_MODEL = NAME_JUDGE_MODEL
 OLLAMA_TIMEOUT = 60.0
 
 # Backward-compatible alias for integrations that imported the old shared
 # model constant. New code should use the mode-specific constants above.
 OLLAMA_MODEL = NAME_EXTRACT_MODEL
+
+
+def model_reference_digest(model: str) -> str:
+    """Fingerprint an Ollama model tag used by an audited model decision.
+
+    This hashes the configured tag, not the model weights.  Batch manifests
+    later record the digest resolved by ``ollama show`` so a mutable tag cannot
+    silently stand in for a particular production model build.
+    """
+
+    return hashlib.sha256(f"ollama-model-reference:{model}".encode("utf-8")).hexdigest()
 
 
 @dataclass(frozen=True)
