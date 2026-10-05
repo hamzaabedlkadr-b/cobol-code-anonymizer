@@ -1,9 +1,9 @@
 """Decode source files without silently replacing or discarding bytes.
 
 This module is the first, isolated part of the future COBOL/JCL region reader.
-It records which decoder succeeded and which newline convention the decoded
-file uses.  It does not classify source regions, change scanner behaviour, or
-write output files.
+It records which decoder succeeded while preserving the exact source text and
+bytes. It does not classify source regions, change scanner behaviour, or write
+output files.
 
 The fallback order is intentional: strict UTF-8, strict Windows-1252, then
 Latin-1.  Windows-1252 must come before Latin-1 so bytes used for punctuation,
@@ -33,12 +33,6 @@ from pathlib import Path
 UTF8 = "utf-8"
 WINDOWS_1252 = "cp1252"
 LATIN1 = "latin-1"
-
-NEWLINE_NONE = "none"
-NEWLINE_LF = "lf"
-NEWLINE_CRLF = "crlf"
-NEWLINE_CR = "cr"
-NEWLINE_MIXED = "mixed"
 
 UTF8_BOM = b"\xef\xbb\xbf"
 UTF16_LE_BOM = b"\xff\xfe"
@@ -199,10 +193,9 @@ class DecodedSource:
     """Exact decoded text together with the decoding facts needed later.
 
     ``encoding`` is the codec that successfully decoded the original bytes.
-    ``newline_convention`` describes the line endings without normalizing
-    them, so ``text`` remains an exact decoded representation of the input.
-    ``has_bom`` records a UTF-8 BOM removed from ``text`` and restored by
-    :meth:`encode`. ``embedded_utf8_multibyte_count`` counts the narrow
+    ``text`` preserves line endings exactly without storing a redundant
+    newline-style label. ``has_bom`` records a UTF-8 BOM removed from ``text``
+    and restored by :meth:`encode`. ``embedded_utf8_multibyte_count`` counts the narrow
     C2/C3 UTF-8 sequences that commonly reveal UTF-8 text embedded inside a
     single-byte fallback. The plausibility gate applies the threshold.
     ``sha256`` always identifies the complete original byte sequence,
@@ -212,7 +205,6 @@ class DecodedSource:
 
     text: str
     encoding: str
-    newline_convention: str
     has_bom: bool
     embedded_utf8_multibyte_count: int
     sha256: str
@@ -328,7 +320,6 @@ def _decoded_source_from_verified_bytes(
     return DecodedSource(
         text=text,
         encoding=encoding,
-        newline_convention=detect_newline_convention(text),
         has_bom=has_bom,
         embedded_utf8_multibyte_count=embedded_utf8_multibyte_count,
         sha256=sha256,
@@ -450,25 +441,6 @@ def read_source(path: Path) -> DecodedSource:
     """Read and decode one file without modifying it or normalizing newlines."""
 
     return decode_source_bytes(path.read_bytes(), source_path=path)
-
-
-def detect_newline_convention(text: str) -> str:
-    """Return ``lf``, ``crlf``, ``cr``, ``mixed``, or ``none`` for text."""
-
-    crlf_count = text.count("\r\n")
-    lf_count = text.count("\n") - crlf_count
-    cr_count = text.count("\r") - crlf_count
-    styles = sum(count > 0 for count in (lf_count, crlf_count, cr_count))
-
-    if styles == 0:
-        return NEWLINE_NONE
-    if styles > 1:
-        return NEWLINE_MIXED
-    if crlf_count:
-        return NEWLINE_CRLF
-    if lf_count:
-        return NEWLINE_LF
-    return NEWLINE_CR
 
 
 def split_source_lines(text: str, *, keepends: bool = False) -> list[str]:
