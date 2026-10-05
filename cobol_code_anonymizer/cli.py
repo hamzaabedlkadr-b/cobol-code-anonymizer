@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import json
 import sys
 from pathlib import Path
 
@@ -11,6 +12,7 @@ from . import __version__
 from .llm import (
     NAME_EXTRACT_MODEL,
     NAME_JUDGE_MODEL,
+    NAME_VERIFIER_MODEL,
     OLLAMA_HOST,
     OLLAMA_TIMEOUT,
 )
@@ -24,7 +26,8 @@ from .replacements import (
     suggested_replacement,
     write_mapping_template,
 )
-from .scanner import DEFAULT_ENTITIES, Finding, scan_path, write_json
+from .pipeline import scan_path
+from .scanner import DEFAULT_ENTITIES, Finding, write_json
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -32,6 +35,13 @@ def main(argv: list[str] | None = None) -> int:
     raw_args = list(argv) if argv is not None else sys.argv[1:]
     args = parser.parse_args(raw_args)
     apply_mode_preset(args, raw_args)
+    # Keep parsing the retired flag so existing automation receives a clear
+    # migration error instead of silently changing how private data is read.
+    if args.employee_roster:
+        parser.error(
+            "--employee-roster is no longer supported; use --watchlist FILE "
+            "instead (one confirmed name/surname or numeric matricola per line)."
+        )
     if args.mode == "extraction-only" and args.detect_unknown_names:
         parser.error(
             "extraction-only mode cannot be combined with --detect-unknown-names "
@@ -47,11 +57,22 @@ def main(argv: list[str] | None = None) -> int:
 
     entities = {"NAME"} if args.names_only else set(args.entities) if args.entities else set(DEFAULT_ENTITIES)
     extra_watchlists = [path.resolve() for path in args.watchlist]
-    employee_rosters = [path.resolve() for path in args.employee_roster]
     report_dir = args.report_dir.resolve() if args.report_dir else output_dir
     skip_roots = [path for path in (output_dir, report_dir) if path.exists()]
     diagnostics: list[str] = []
+    not_complete_files: list[dict[str, str]] = []
+    # B2 collects correction items in memory. A later review-loop phase will
+    # group and write them; they never change today's anonymization output.
+    correction_review_items = []
     print(f"Mode: {args.mode}")
+    if any(
+        item == "--judge-policy" or item.startswith("--judge-policy=")
+        for item in raw_args
+    ):
+        print(
+            "Warning: --judge-policy is deprecated and ignored; "
+            "the privacy-first pipeline now has one policy."
+        )
 
     name_extractor = None
     if args.name_extract or args.name_extract_model:
@@ -77,6 +98,7 @@ def main(argv: list[str] | None = None) -> int:
         print(f"Name extraction enabled: {extract_model} at {extract_host}")
 
     name_judge = None
+    name_verifier = None
     if args.name_judge or args.name_judge_model:
         from .judge import NameJudge
 
@@ -87,11 +109,19 @@ def main(argv: list[str] | None = None) -> int:
             judge_host,
             judge_model,
             timeout=judge_timeout,
-            policy=args.judge_policy,
         )
         judge_ok, judge_reason = name_judge.canary_ok()
         if judge_ok:
+            from .verifier import NameVerifier
+
+            verifier_model = args.name_verifier_model or NAME_VERIFIER_MODEL
+            name_verifier = NameVerifier(
+                judge_host,
+                verifier_model,
+                timeout=judge_timeout,
+            )
             print(f"Name judge enabled: {judge_model} at {judge_host}")
+            print(f"Name verifier enabled: {verifier_model} at {judge_host}")
         else:
             # Never continue with a judge that cannot be trusted: a model that
             # answers the same way to everything looks like it works while
@@ -103,7 +133,6 @@ def main(argv: list[str] | None = None) -> int:
         input_path=input_path,
         entities=entities,
         extra_watchlists=extra_watchlists,
-        employee_rosters=employee_rosters,
         include_default_names=not args.no_default_name_watchlist,
         detect_unknown_names=args.detect_unknown_names,
         unknown_name_min_length=args.unknown_name_min_length,
@@ -112,8 +141,11 @@ def main(argv: list[str] | None = None) -> int:
         use_presidio=not args.no_presidio,
         presidio_model=args.presidio_model,
         diagnostics=diagnostics,
+        not_complete_files=not_complete_files,
+        review_items=correction_review_items,
         name_extractor=name_extractor,
         name_judge=name_judge,
+        name_verifier=name_verifier,
         deterministic_names_enabled=args.mode != "extraction-only",
         progress=print_progress,
     )
@@ -152,57 +184,33 @@ def main(argv: list[str] | None = None) -> int:
     if name_judge is not None:
         judge_path = report_dir / "judge_decisions.json"
         name_judge.write_decisions(judge_path)
-        rejected = sum(1 for row in name_judge.decisions if row["decision"] == "reject")
-        review_rejected = sum(
-            1 for row in name_judge.decisions if row["decision"] == "review_reject"
+        anonymized = sum(
+            1
+            for row in name_judge.decisions
+            if row["decision"]
+            in {"anonymize_whole", "anonymize_and_review", "anonymize_part"}
         )
-        marker_rejected = sum(
-            1 for row in name_judge.decisions if row["decision"] == "marker_reject"
+        left_unchanged = sum(
+            1 for row in name_judge.decisions if row["decision"] == "leave_unchanged"
         )
         instruction_anonymized = sum(
             1
             for row in name_judge.decisions
-            if row["decision"] in {"instruction_anonymize", "instruction_reject"}
+            if row.get("policy_gate") == "instruction_text"
         )
         print(
-            f"\nName judge ({name_judge.policy}): {name_judge.calls} calls, "
+            f"\nName judge: {name_judge.calls} calls, "
             f"{name_judge.cache_hits} cached, "
-            f"{name_judge.errors} errors, {rejected} candidates rejected, "
-            f"{review_rejected} review-only rejections, "
-            f"{marker_rejected} overridden on person-marker lines, "
+            f"{name_judge.errors} errors, {anonymized} candidates marked for anonymization, "
+            f"{left_unchanged} approved unchanged, "
             f"{instruction_anonymized} anonymized by the instruction-text policy gate."
         )
-        if rejected:
-            print(f"Rejected candidates were left unanonymized. Review: {judge_path}")
-        if review_rejected:
-            print(
-                "Multi-token review rejections remained anonymized. "
-                f"Review before enabling active rejection: {judge_path}"
-            )
-        if marker_rejected:
-            print(
-                f"{marker_rejected} rejection(s) on lines naming a person were overridden "
-                f"and stayed anonymized. Unexpected volume here can indicate prompt "
-                f"injection in the source: {judge_path}"
-            )
+        if left_unchanged:
+            print(f"Candidates approved unchanged by the full policy: {judge_path}")
         if instruction_anonymized:
             print(
                 f"{instruction_anonymized} candidate(s) on instruction-like source lines "
                 f"bypassed the judge and stayed anonymized: {judge_path}"
-            )
-        if (
-            not rejected
-            and not review_rejected
-            and not marker_rejected
-            and not instruction_anonymized
-            and name_judge.calls
-        ):
-            # Symptom of a model that keeps everything on the cases that matter.
-            # The startup canary only catches total degeneracy, not this.
-            print(
-                f"Warning: the judge rejected nothing across {name_judge.calls} calls, so "
-                f"{name_judge.model} changed no output here. Verify it discriminates "
-                "before trusting it as a precision filter."
             )
 
     if name_extractor is not None or name_judge is not None:
@@ -217,6 +225,15 @@ def main(argv: list[str] | None = None) -> int:
         )
         print(f"LLM name review: {review_path}")
         print(f"LLM findings text: {llm_text_path}")
+
+    if not_complete_files:
+        status_path = write_not_complete_files_report(report_dir, not_complete_files)
+        print(
+            f"\nNOT_COMPLETE: {len(not_complete_files)} file(s) could not be "
+            "safely decoded. No mapping or anonymized output was created."
+        )
+        print(f"File status report: {status_path}")
+        return 1
 
     if args.names_only:
         names = [finding for finding in findings if finding.entity_type == "NAME"]
@@ -266,7 +283,22 @@ def main(argv: list[str] | None = None) -> int:
         print("\nNo replacements selected; no anonymized output was written.")
         return 0
 
-    changed_files, replacement_count = apply_replacements(input_path, output_dir, findings, replacements)
+    write_failures: list[dict[str, str]] = []
+    changed_files, replacement_count = apply_replacements(
+        input_path,
+        output_dir,
+        findings,
+        replacements,
+        not_complete_files=write_failures,
+    )
+    if write_failures:
+        status_path = write_not_complete_files_report(report_dir, write_failures)
+        print(
+            f"\nNOT_COMPLETE: {len(write_failures)} file(s) could not be "
+            "safely written. Their previous output, if any, was not overwritten."
+        )
+        print(f"File status report: {status_path}")
+        return 1
     write_mapping_template(output_dir / "replacement_map.csv", groups, replacements, args.salt)
     print(f"\nAnonymized output written to: {output_dir}")
     print(f"Changed files: {changed_files}")
@@ -274,6 +306,20 @@ def main(argv: list[str] | None = None) -> int:
     print(f"Findings JSON: {report_dir / 'anonymization_findings.json'}")
     print(f"Replacement map: {output_dir / 'replacement_map.csv'}")
     return 0
+
+
+def write_not_complete_files_report(
+    report_dir: Path,
+    not_complete_files: list[dict[str, str]],
+) -> Path:
+    """Write the per-file failure audit used until the pipeline owns statuses."""
+
+    status_path = report_dir / "not_complete_files.json"
+    status_path.write_text(
+        json.dumps(not_complete_files, indent=2, ensure_ascii=False),
+        encoding="utf-8",
+    )
+    return status_path
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -305,7 +351,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--union",
         action="store_true",
         help=(
-            "Union shortcut: combine spaCy/Presidio, watchlists, the employee roster, "
+            "Union shortcut: combine spaCy/Presidio, watchlists, "
             "and default LLM name extraction."
         ),
     )
@@ -343,12 +389,15 @@ def build_parser() -> argparse.ArgumentParser:
         action="append",
         type=Path,
         default=[],
-        help="Private employee roster file containing names and matriculas. Can be used multiple times.",
+        help=(
+            "Deprecated compatibility option. This command exits with an error; "
+            "use --watchlist FILE instead."
+        ),
     )
     parser.add_argument(
         "--no-default-name-watchlist",
         action="store_true",
-        help="Do not load the bundled Italian name list; useful for exact roster-only scans.",
+        help="Do not load the bundled Italian name list; useful when --watchlist is the complete name list.",
     )
     parser.add_argument(
         "--detect-unknown-names",
@@ -409,9 +458,15 @@ def build_parser() -> argparse.ArgumentParser:
         "--name-judge-model",
         help=(
             "Override the Ollama model configured in llm.py and enable the name judge. "
-            "Judges whether NAME candidates "
-            "are people or ordinary words. Rejections are review-only unless --judge-policy "
-            "active is selected; protected roster names and model failures always stay."
+            "The judge proposes semantic outcomes; only the privacy policy may approve "
+            "leaving a candidate readable."
+        ),
+    )
+    parser.add_argument(
+        "--name-verifier-model",
+        help=(
+            "Override the independent verifier model. It is called only after a "
+            "fully resolved non-person judge proposal."
         ),
     )
     parser.add_argument(
@@ -423,8 +478,7 @@ def build_parser() -> argparse.ArgumentParser:
         choices=("conservative", "active"),
         default="conservative",
         help=(
-            "How LLM rejections affect findings. conservative keeps and logs every rejection; "
-            "active applies guarded single-token rejections."
+            "Deprecated compatibility option; ignored. The privacy-first pipeline has one policy."
         ),
     )
     parser.add_argument(
@@ -477,12 +531,6 @@ def apply_mode_preset(args: argparse.Namespace, argv: list[str]) -> None:
     elif args.mode == "union-judge":
         args.name_extract = True
         args.name_judge = True
-        policy_was_explicit = any(
-            item == "--judge-policy" or item.startswith("--judge-policy=")
-            for item in argv
-        )
-        if not policy_was_explicit:
-            args.judge_policy = "active"
 
 
 def extraction_chunk_size(value: str) -> int:
@@ -657,14 +705,18 @@ def print_name_explanations(
             f"{finding.text!r} -> {found_by}{suffix}"
         )
 
-    rejected = [row for row in decisions if row.get("decision") == "reject"]
+    rejected = [
+        row
+        for row in decisions
+        if row.get("decision") == "leave_unchanged"
+    ]
     if rejected:
-        print("\nRemoved by the LLM judge:")
+        print("\nLeft readable after the complete non-person policy:")
         for row in rejected:
             reason = JUDGE_REASON_LABELS.get(str(row.get("reason_code", "")), "not a person name")
             print(
                 f"  {row['file']}:{row['line']}:{row['column']} "
-                f"{row['text']!r} -> rejected as {reason}"
+                f"{row['text']!r} -> verified as {reason}"
             )
 
 
@@ -681,20 +733,13 @@ def format_judge_decision(row: dict[str, object] | None) -> str:
     reason = JUDGE_REASON_LABELS.get(str(row.get("reason_code", "")), "not a person name")
     if row.get("error"):
         return "judge failed, so the candidate was safely kept"
-    if decision == "keep":
-        return "judge classified it as a person name"
-    if decision == "uncertain":
-        return "judge was uncertain, so it was kept"
-    if decision == "protected":
-        return "judge was not called because the roster protects it"
-    if decision == "review_reject":
-        return f"judge suggested {reason}, but the safety policy kept it"
-    if decision == "marker_reject":
-        return f"judge suggested {reason}, but the person marker protected it"
-    if decision == "instruction_reject":
-        return f"judge suggested {reason}, but instruction-like text protected it"
-    if decision == "instruction_anonymize":
-        return "instruction-like source text triggered mandatory anonymization before judging"
+    if decision in {"anonymize_whole", "anonymize_and_review", "anonymize_part"}:
+        policy_reading = str(row.get("policy_reading", ""))
+        return policy_reading or "privacy policy requires anonymization"
+    if decision == "leave_unchanged":
+        return f"policy verified a non-person reading ({reason})"
+    if decision == "review_required":
+        return "code-sensitive candidate requires manual review"
     return ""
 
 
@@ -831,8 +876,8 @@ def write_llm_name_review_text(
     lines = [f"Mode: {mode}", f"LLM findings: {len(rows)}"]
     if name_judge is not None:
         lines.append(
-            "REJECT means the judge said the candidate is not a person name; "
-            "check action to see whether the rejection was applied."
+            "LEAVE_UNCHANGED requires the judge, deterministic policy gates, "
+            "and independent verifier to agree on a non-person reading."
         )
     else:
         lines.append(
@@ -870,12 +915,15 @@ def write_llm_name_review_text(
         "UNCERTAIN": 1,
         "PROTECTED": 2,
         "ANONYMIZE": 3,
-        "REJECT": 4,
-        "AGREEMENT": 5,
-        "LLM_ONLY": 6,
-        "BASELINE_ONLY": 7,
-        "DISCARDED": 8,
-        "NOT_JUDGED": 9,
+        "CORRECTION_REVIEW": 4,
+        "REVIEW_REQUIRED": 5,
+        "LEAVE_UNCHANGED": 6,
+        "REJECT": 7,
+        "AGREEMENT": 8,
+        "LLM_ONLY": 9,
+        "BASELINE_ONLY": 10,
+        "DISCARDED": 11,
+        "NOT_JUDGED": 12,
     }
     ordered = sorted(
         grouped.values(),
@@ -905,10 +953,14 @@ def write_llm_name_review_text(
 
 def llm_text_status(row: dict[str, object]) -> str:
     judge_status = str(row.get("judge_status", "not_judged"))
-    if judge_status in {"review_reject", "marker_reject", "instruction_reject"}:
-        return "REJECT"
-    if judge_status == "instruction_anonymize":
+    if judge_status == "anonymize_and_review":
+        return "CORRECTION_REVIEW"
+    if judge_status in {"anonymize_whole", "anonymize_part"}:
         return "ANONYMIZE"
+    if judge_status == "leave_unchanged":
+        return "LEAVE_UNCHANGED"
+    if judge_status == "review_required":
+        return "REVIEW_REQUIRED"
     if judge_status != "not_judged":
         return judge_status.upper()
     extraction_status = str(row.get("extraction_status", "not_available"))
@@ -924,25 +976,14 @@ def llm_text_reason(row: dict[str, object]) -> str:
     judge_status = str(row.get("judge_status", "not_judged"))
     reason_code = str(row.get("reason", ""))
     reason = JUDGE_REASON_LABELS.get(reason_code, reason_code or "no reason supplied")
-    if judge_status == "keep":
-        if reason_code:
-            return f"judge error ({reason_code}); candidate was safely kept"
-        return "judge classified it as a person name"
-    if judge_status == "uncertain":
-        return "judge was uncertain, so the candidate was kept"
-    if judge_status == "protected":
-        return "employee roster protection; judge was not called"
-    if judge_status == "reject":
-        return f"judge rejected it as {reason}"
-    if judge_status == "review_reject":
-        return f"judge suggested {reason}; safety policy kept the candidate"
-    if judge_status == "marker_reject":
-        return f"judge suggested {reason}; person marker kept the candidate"
-    if judge_status == "instruction_reject":
-        return f"judge suggested {reason}; instruction-like text kept the candidate"
-    if judge_status == "instruction_anonymize":
-        return "instruction-text policy gate anonymized the candidate before judging"
-
+    if judge_status == "anonymize_and_review":
+        return "candidate was anonymized and marked for later correction review"
+    if judge_status in {"anonymize_whole", "anonymize_part"}:
+        return reason_code or "privacy policy requires anonymization"
+    if judge_status == "leave_unchanged":
+        return f"full policy approved a non-person reading ({reason})"
+    if judge_status == "review_required":
+        return "code-sensitive occurrence requires manual review"
     extraction_status = str(row.get("extraction_status", "not_available"))
     sources = str(row.get("detector_sources", "")).replace(";", ", ")
     if extraction_status == "agreement":
@@ -964,19 +1005,10 @@ def llm_review_row(
     judge_status = str(decision.get("decision", "not_judged")) if decision else "not_judged"
     reason_code = str(decision.get("reason_code", "")) if decision else ""
     error = str(decision.get("error", "")) if decision else ""
+    policy_reading = str(decision.get("policy_reading", "")) if decision else ""
 
-    if judge_status == "reject":
+    if judge_status == "leave_unchanged":
         final_action = "removed_from_findings"
-    elif judge_status in {
-        "keep",
-        "uncertain",
-        "protected",
-        "review_reject",
-        "marker_reject",
-        "instruction_reject",
-        "instruction_anonymize",
-    }:
-        final_action = "kept_as_finding"
     else:
         final_action = "kept_as_finding"
 
@@ -992,7 +1024,7 @@ def llm_review_row(
         "extraction_status": extraction_status,
         "judge_status": judge_status,
         "final_action": final_action,
-        "reason": error or reason_code,
+        "reason": error or policy_reading or reason_code,
         "detector_sources": detector_sources,
         "context": decision.get("context", "") if decision else "",
     }
@@ -1008,9 +1040,9 @@ def choose_replacements(
     total = len(groups)
     interactive = not auto
     print("\nChoose replacements.")
-    print("Press Enter to use the suggestion, type your own value, or type 'skip' to leave it unchanged.")
-
-    print("Type 'all' to accept all remaining suggestions, or 'skip-all' to leave all remaining values unchanged.")
+    print("Press Enter to use the suggestion or type your own value.")
+    print("Type 'all' to accept all remaining suggestions.")
+    print("For non-NAME entities only, 'skip' leaves one unchanged and 'skip-all' stops prompts.")
 
     for index, group in enumerate(groups, start=1):
         suggestion = loaded_mapping.get(group.key) or suggested_replacement(group, index, salt)
@@ -1022,20 +1054,26 @@ def choose_replacements(
             f"{index}/{total} {group.entity_type} {group.original!r} "
             f"(hits={group.count}) [{suggestion}]: "
         )
-        try:
-            answer = input(prompt).strip()
-        except EOFError:
-            interactive = False
-            answer = ""
+        while True:
+            try:
+                answer = input(prompt).strip()
+            except EOFError:
+                interactive = False
+                answer = ""
 
-        if answer.lower() == "skip-all":
+            command = answer.lower()
+            if group.entity_type == "NAME" and command in {"skip", "s", "skip-all"}:
+                print("NAME findings cannot be skipped; enter a replacement or press Enter.")
+                continue
+            if command == "skip-all":
+                return replacements
+            if command == "all":
+                auto = True
+                answer = ""
+            if command in {"skip", "s"}:
+                break
+            replacements[group.key] = answer or suggestion
             break
-        if answer.lower() == "all":
-            auto = True
-            answer = ""
-        if answer.lower() in {"skip", "s"}:
-            continue
-        replacements[group.key] = answer or suggestion
 
     if not interactive and not auto:
         print("Input ended; remaining blank answers used suggestions.")

@@ -63,6 +63,18 @@ def _anonymize_whole(occurrence_id: str, reading: str) -> Decision:
     )
 
 
+def _anonymize_and_review(occurrence_id: str, reading: str) -> Decision:
+    """Anonymize now, while recording that a later review may restore text."""
+
+    return Decision(
+        occurrence_id=occurrence_id,
+        stage="policy",
+        outcome="anonymize_and_review",
+        person_scope="whole",
+        reading=reading,
+    )
+
+
 def _review_identifier(occurrence_id: str, reading: str) -> Decision:
     return Decision(
         occurrence_id=occurrence_id,
@@ -92,8 +104,10 @@ def apply_name_policy(
     same expanded value to both this function and the model call.
 
     Only a valid verifier ``not_possible`` decision can produce
-    ``leave_unchanged``. Every uncertainty and technical model outcome moves
-    in the privacy-safe direction.
+    ``leave_unchanged``. An unclear non-person proposal produces
+    ``anonymize_and_review``: the full candidate is still anonymized, but the
+    pipeline may queue it for later correction review. Every other uncertainty
+    and technical model outcome moves in the privacy-safe direction.
     """
 
     if judge_decision is not None:
@@ -133,11 +147,29 @@ def apply_name_policy(
     if judge_decision.outcome != "propose_unchanged":
         return protect("unsupported judge outcome requires anonymization")
     if unresolved_evidence:
-        return protect("unresolved deterministic evidence requires anonymization")
+        if code_sensitive_identifier:
+            return _review_identifier(
+                occurrence_id,
+                "unresolved deterministic evidence requires identifier review",
+            )
+        return _anonymize_and_review(
+            occurrence_id,
+            "non-person proposal has unresolved deterministic evidence",
+        )
     if verifier_decision is None:
         return protect("independent verifier has not approved the proposal")
+    if verifier_decision.outcome in {"possible", "unsure"}:
+        if code_sensitive_identifier:
+            return _review_identifier(
+                occurrence_id,
+                "judge and verifier did not agree on a non-person reading",
+            )
+        return _anonymize_and_review(
+            occurrence_id,
+            "judge and verifier did not agree on a non-person reading",
+        )
     if verifier_decision.outcome != "not_possible":
-        return protect("verifier did not rule out a person reading")
+        return protect("independent verifier failed before approving the proposal")
 
     return Decision(
         occurrence_id=occurrence_id,

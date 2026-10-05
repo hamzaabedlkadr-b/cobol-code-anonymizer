@@ -30,6 +30,7 @@ JUDGE_OUTCOMES = {
 VERIFIER_OUTCOMES = {"possible", "not_possible", "unsure", "error"}
 POLICY_OUTCOMES = {
     "anonymize_whole",
+    "anonymize_and_review",
     "anonymize_part",
     "leave_unchanged",
     "review_required",
@@ -193,6 +194,13 @@ OUTCOME_RULES: dict[tuple[str, str], dict[str, FieldRule]] = {
         reading=FORBIDDEN,
     ),
     ("policy", "anonymize_whole"): _field_rules(
+        person_scope=_must_equal("whole"),
+        person_texts=OPTIONAL,
+        non_person_category=FORBIDDEN,
+        evidence_quote=OPTIONAL,
+        reading=REQUIRED,
+    ),
+    ("policy", "anonymize_and_review"): _field_rules(
         person_scope=_must_equal("whole"),
         person_texts=OPTIONAL,
         non_person_category=FORBIDDEN,
@@ -708,7 +716,12 @@ class ReplacementSpan:
 
 @dataclass(frozen=True)
 class ReviewItem:
-    """One occurrence that may need required or optional human review."""
+    """One occurrence queued for required or correction human review.
+
+    ``required=True`` means possible person text remains readable because it
+    cannot be changed safely. ``required=False`` is a correction item: the
+    candidate was already anonymized, so postponing review cannot leak it.
+    """
 
     occurrence_id: str
     reason: str

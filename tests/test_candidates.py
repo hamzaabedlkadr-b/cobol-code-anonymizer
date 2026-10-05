@@ -4,7 +4,8 @@ import unittest
 from pathlib import Path
 
 from cobol_code_anonymizer.candidates import Detection, Occurrence
-from cobol_code_anonymizer.scanner import Finding, scan_path, write_json
+from cobol_code_anonymizer.pipeline import scan_path
+from cobol_code_anonymizer.scanner import Finding, write_json
 
 
 FILE_HASH = "a" * 64

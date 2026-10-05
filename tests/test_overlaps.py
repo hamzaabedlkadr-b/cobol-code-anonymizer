@@ -15,7 +15,8 @@ from cobol_code_anonymizer.overlaps import (
     build_overlap_groups,
     resolve_overlaps,
 )
-from cobol_code_anonymizer.scanner import Finding, scan_path
+from cobol_code_anonymizer.pipeline import scan_path
+from cobol_code_anonymizer.scanner import Finding
 
 
 def finding(
@@ -150,7 +151,7 @@ class OverlapTests(unittest.TestCase):
             watchlist = root / "watchlist.txt"
             watchlist.write_text("TOKENALPHA TOKENBETA\n", encoding="utf-8")
 
-            judge = NameJudge(policy="active")
+            judge = NameJudge()
             rejected_as_common_word = LlmJsonResult(
                 parsed={
                     "decision": "propose_unchanged",
@@ -179,10 +180,59 @@ class OverlapTests(unittest.TestCase):
 
         self.assertEqual([item.text for item in findings], ["TOKENALPHA TOKENBETA"])
         self.assertEqual(findings[0].source, "watchlist")
-        self.assertEqual(judge.decisions[0]["decision"], "review_reject")
+        self.assertEqual(judge.decisions[0]["decision"], "anonymize_and_review")
+        self.assertEqual(
+            judge.decisions[0]["judge_outcome"], "propose_unchanged"
+        )
         self.assertEqual(
             (findings[0].start, findings[0].end),
             (text.index("TOKENALPHA"), text.index("TOKENBETA") + len("TOKENBETA")),
+        )
+
+    def test_adjacent_single_token_findings_stay_separate_and_anonymized(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            source = root / "PROGRAM.CBL"
+            source.write_text(
+                "      * TOTALE: TOKENALPHA TOKENBETA\n",
+                encoding="utf-8",
+            )
+            watchlist = root / "watchlist.txt"
+            watchlist.write_text("TOKENALPHA\nTOKENBETA\n", encoding="utf-8")
+            judge = NameJudge()
+            proposal = LlmJsonResult(
+                parsed={
+                    "decision": "propose_unchanged",
+                    "person_scope": "none",
+                    "person_texts": [],
+                    "non_person_category": "common_word",
+                    "evidence_quote": "TOTALE",
+                    "reading": "The text is used as a non-person label.",
+                },
+                content="",
+                latency_s=0.0,
+                schema_ok=True,
+            )
+            with patch(
+                "cobol_code_anonymizer.judge.call_ollama_json",
+                return_value=proposal,
+            ):
+                findings = scan_path(
+                    source,
+                    entities={"NAME"},
+                    extra_watchlists=[watchlist],
+                    include_default_names=False,
+                    use_presidio=False,
+                    name_judge=judge,
+                )
+
+        self.assertEqual(
+            [item.text for item in findings],
+            ["TOKENALPHA", "TOKENBETA"],
+        )
+        self.assertEqual(
+            [row["decision"] for row in judge.decisions],
+            ["anonymize_and_review", "anonymize_and_review"],
         )
 
 
