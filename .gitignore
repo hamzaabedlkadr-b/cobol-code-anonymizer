@@ -13,6 +13,9 @@ anonymized/
 reports/
 replacement_map.csv
 anonymization_findings.json
+experiments/candidate_exports/
+experiments/source_samples/
+experiments/source_labels/
 samples/*_anonymized*/
 samples/*_report*/
 samples/replacement_map_*.csv
