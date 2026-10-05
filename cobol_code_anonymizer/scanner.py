@@ -14,6 +14,7 @@ from .candidates import (
     finding_fields,
     records_from_finding,
 )
+from .overlaps import resolve_overlaps
 
 
 TEXT_EXTENSIONS = {
@@ -834,7 +835,7 @@ def scan_path(
                 protected_regex=protected_regex,
             )
         )
-    return remove_overlaps(findings)
+    return list(resolve_overlaps(findings).selected)
 
 
 def scan_file(
@@ -907,7 +908,7 @@ def scan_file(
         # Judge after overlap removal so no LLM call is spent on a span that is
         # about to be discarded. The judge only removes, so it cannot create
         # new overlaps for the final pass in scan_path.
-        name_findings = remove_overlaps(name_findings)
+        name_findings = list(resolve_overlaps(name_findings).selected)
         if name_judge is not None:
             protected_ranges = (
                 [match.span() for match in protected_regex.finditer(text)]
@@ -1118,7 +1119,7 @@ def scan_unknown_name_candidates(
                 min_length,
             )
         )
-    return remove_overlaps(findings)
+    return list(resolve_overlaps(findings).selected)
 
 
 def scan_unknown_name_shapes(
@@ -1431,11 +1432,20 @@ def scan_watchlist_names(
                     source=source,
                 )
             )
-    raw = remove_overlaps(raw)
-    return merge_adjacent_names(text, raw)
+    # Keep multi-token watchlist identities intact until the new removal
+    # policy is in place. The current judge treats multi-token rejections as
+    # review-only; splitting them here could make a real person removable.
+    return merge_adjacent_names(text, list(resolve_overlaps(raw).selected))
 
 
 def merge_adjacent_names(text: str, findings: list[Finding]) -> list[Finding]:
+    """Temporarily preserve whitespace-adjacent multi-token identities.
+
+    This compatibility safeguard is retired together with the old judge path
+    in implementation step 27, after the single removal policy can judge
+    narrow units without weakening protection.
+    """
+
     merged: list[Finding] = []
     pending: Finding | None = None
     for finding in sorted(findings, key=lambda item: (item.file, item.start, item.end)):
@@ -1469,42 +1479,11 @@ def merge_adjacent_names(text: str, findings: list[Finding]) -> list[Finding]:
 
 
 def remove_overlaps(findings: list[Finding]) -> list[Finding]:
-    priority = {
-        "CODICE_FISCALE": 100,
-        "IBAN": 95,
-        "EMAIL": 90,
-        "MATRICOLA": 80,
-        "SUSPECTED_MATRICOLA": 79,
-        "PHONE": 75,
-        "NAME": 60,
-    }
-    ordered = sorted(
-        findings,
-        key=lambda item: (
-            item.file,
-            item.start,
-            -priority.get(item.entity_type, 0),
-            -(item.end - item.start),
-        ),
-    )
-    kept: list[Finding] = []
-    for finding in ordered:
-        overlaps = [
-            existing
-            for existing in kept
-            if existing.file == finding.file
-            and not (finding.end <= existing.start or finding.start >= existing.end)
-        ]
-        if not overlaps:
-            kept.append(finding)
-            continue
-        best = max(
-            overlaps,
-            key=lambda item: (priority.get(item.entity_type, 0), item.end - item.start),
-        )
-        finding_rank = (priority.get(finding.entity_type, 0), finding.end - finding.start)
-        best_rank = (priority.get(best.entity_type, 0), best.end - best.start)
-        if finding_rank > best_rank:
-            kept = [item for item in kept if item not in overlaps]
-            kept.append(finding)
-    return sorted(kept, key=lambda item: (item.file, item.start, item.end))
+    """Compatibility wrapper around the overlap-group resolver.
+
+    New code should retain :func:`resolve_overlaps` so later evidence can see
+    every group member. Legacy callers still receive the unchanged selected
+    finding list through this function.
+    """
+
+    return list(resolve_overlaps(findings).selected)
