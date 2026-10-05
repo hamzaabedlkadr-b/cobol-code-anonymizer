@@ -15,6 +15,11 @@ from .candidates import (
     records_from_finding,
 )
 from .overlaps import resolve_overlaps
+from .source_reader import (
+    SourceDecodingError,
+    UnsupportedSourceEncodingError,
+    read_source,
+)
 
 
 TEXT_EXTENSIONS = {
@@ -379,6 +384,14 @@ class Finding:
 
 
 def read_text(path: Path) -> str:
+    """Read a small auxiliary list using the legacy compatibility fallback.
+
+    Production source programs are deliberately *not* read through this
+    helper: :func:`scan_file` uses ``source_reader.read_source`` so unsafe
+    decoding becomes a visible incomplete-file result.  This fallback remains
+    temporarily for user-supplied watchlists and the pre-A4 writer.
+    """
+
     try:
         return path.read_text(encoding="utf-8")
     except UnicodeDecodeError:
@@ -754,13 +767,24 @@ def scan_path(
     use_presidio: bool = True,
     presidio_model: str = "it_core_news_sm",
     diagnostics: list[str] | None = None,
+    not_complete_files: list[dict[str, str]] | None = None,
     name_judge: object | None = None,
+    name_verifier: object | None = None,
     name_extractor: object | None = None,
     deterministic_names_enabled: bool = True,
     progress: Callable[[str], None] | None = None,
 ) -> list[Finding]:
+    """Scan text candidates, recording unreadable sources as NOT_COMPLETE.
+
+    ``not_complete_files`` is an optional plain-record output for the current
+    CLI bridge.  It lets a batch continue inspecting other files while making
+    each source-reader failure explicit; callers must not treat a non-empty
+    list as a successful complete scan.
+    """
+
     selected = entities or DEFAULT_ENTITIES
     diag = diagnostics if diagnostics is not None else []
+    incomplete = not_complete_files if not_complete_files is not None else []
     roster_names, roster_matriculas = load_employee_rosters(employee_rosters)
     names = (
         load_names(extra_watchlists, include_default=include_default_names)
@@ -818,8 +842,8 @@ def scan_path(
             progress(
                 f"Analyzing file {index}/{len(paths)}: {relative_name(path, input_path)}"
             )
-        findings.extend(
-            scan_file(
+        try:
+            file_findings = scan_file(
                 path,
                 input_path,
                 selected,
@@ -832,9 +856,31 @@ def scan_path(
                 presidio_analyzer=presidio_analyzer,
                 name_extractor=name_extractor,
                 name_judge=name_judge,
+                name_verifier=name_verifier,
+                watchlist_names=frozenset(name.casefold() for name in names),
                 protected_regex=protected_regex,
             )
+        except (SourceDecodingError, UnsupportedSourceEncodingError) as exc:
+            reason = exc.reason
+            message = f"{relative_name(path, input_path)}: {reason}: {exc}"
+        except OSError as exc:
+            reason = "source_read_error"
+            message = f"{relative_name(path, input_path)}: {reason}: {exc}"
+        else:
+            findings.extend(file_findings)
+            continue
+
+        # Continue with later files, but make it impossible for the CLI to
+        # report this partial run as complete or create anonymized output.
+        incomplete.append(
+            {
+                "file": relative_name(path, input_path),
+                "status": "NOT_COMPLETE",
+                "reason": reason,
+                "message": message,
+            }
         )
+        diag.append(f"NOT_COMPLETE: {message}")
     return list(resolve_overlaps(findings).selected)
 
 
@@ -851,9 +897,12 @@ def scan_file(
     presidio_analyzer: object | None = None,
     name_extractor: object | None = None,
     name_judge: object | None = None,
+    name_verifier: object | None = None,
+    watchlist_names: frozenset[str] = frozenset(),
     protected_regex: re.Pattern[str] | None = None,
 ) -> list[Finding]:
-    text = read_text(path)
+    source = read_source(path)
+    text = source.text
     rel_file = relative_name(path, input_path)
     findings: list[Finding] = []
 
@@ -915,7 +964,13 @@ def scan_file(
                 if protected_regex is not None
                 else []
             )
-            name_findings = name_judge.filter(name_findings, protected_ranges)
+            name_findings = name_judge.filter(
+                name_findings,
+                protected_ranges,
+                file_sha256=source.sha256,
+                name_verifier=name_verifier,
+                watchlist_values=watchlist_names,
+            )
         findings.extend(name_findings)
 
     return findings
@@ -1432,50 +1487,7 @@ def scan_watchlist_names(
                     source=source,
                 )
             )
-    # Keep multi-token watchlist identities intact until the new removal
-    # policy is in place. The current judge treats multi-token rejections as
-    # review-only; splitting them here could make a real person removable.
-    return merge_adjacent_names(text, list(resolve_overlaps(raw).selected))
-
-
-def merge_adjacent_names(text: str, findings: list[Finding]) -> list[Finding]:
-    """Temporarily preserve whitespace-adjacent multi-token identities.
-
-    This compatibility safeguard is retired together with the old judge path
-    in implementation step 27, after the single removal policy can judge
-    narrow units without weakening protection.
-    """
-
-    merged: list[Finding] = []
-    pending: Finding | None = None
-    for finding in sorted(findings, key=lambda item: (item.file, item.start, item.end)):
-        if pending is None:
-            pending = finding
-            continue
-        gap = text[pending.end : finding.start]
-        same_file = pending.file == finding.file
-        same_line = pending.line == finding.line
-        if same_file and same_line and gap and gap.strip() == "":
-            start, end = pending.start, finding.end
-            line, column = line_column(text, start)
-            pending = Finding(
-                file=pending.file,
-                entity_type="NAME",
-                text=text[start:end],
-                start=start,
-                end=end,
-                line=line,
-                column=column,
-                confidence=max(pending.confidence, finding.confidence),
-                context=context_for(text, start, end),
-                source=pending.source if pending.source == finding.source else "mixed",
-            )
-        else:
-            merged.append(pending)
-            pending = finding
-    if pending is not None:
-        merged.append(pending)
-    return merged
+    return list(resolve_overlaps(raw).selected)
 
 
 def remove_overlaps(findings: list[Finding]) -> list[Finding]:
