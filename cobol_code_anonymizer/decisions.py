@@ -27,7 +27,7 @@ JUDGE_OUTCOMES = {
     "uncertain",
     "error",
 }
-VERIFIER_OUTCOMES = {"possible", "not_possible", "unsure", "error"}
+VERIFIER_OUTCOMES = {"person", "not_person", "unsure", "error"}
 POLICY_OUTCOMES = {
     "anonymize_whole",
     "anonymize_and_review",
@@ -132,6 +132,9 @@ def _field_rules(
 OUTCOME_RULES: dict[tuple[str, str], dict[str, FieldRule]] = {
     ("judge", "anonymize_whole"): _field_rules(
         person_scope=_must_equal("whole"),
+        # The prompt requires complete person text. Keep this optional at the
+        # schema boundary so an older/smaller local model with an empty safe
+        # answer still hides the original candidate instead of aborting a file.
         person_texts=OPTIONAL,
         non_person_category=FORBIDDEN,
         evidence_quote=OPTIONAL,
@@ -148,7 +151,7 @@ OUTCOME_RULES: dict[tuple[str, str], dict[str, FieldRule]] = {
         person_scope=_must_equal("none"),
         person_texts=FORBIDDEN,
         non_person_category=REQUIRED,
-        evidence_quote=REQUIRED,
+        evidence_quote=OPTIONAL,
         reading=REQUIRED,
     ),
     ("judge", "uncertain"): _field_rules(
@@ -165,18 +168,18 @@ OUTCOME_RULES: dict[tuple[str, str], dict[str, FieldRule]] = {
         evidence_quote=FORBIDDEN,
         reading=FORBIDDEN,
     ),
-    ("verifier", "possible"): _field_rules(
+    ("verifier", "person"): _field_rules(
         person_scope=FORBIDDEN,
         person_texts=FORBIDDEN,
         non_person_category=FORBIDDEN,
         evidence_quote=OPTIONAL,
         reading=OPTIONAL,
     ),
-    ("verifier", "not_possible"): _field_rules(
+    ("verifier", "not_person"): _field_rules(
         person_scope=FORBIDDEN,
         person_texts=FORBIDDEN,
         non_person_category=FORBIDDEN,
-        evidence_quote=REQUIRED,
+        evidence_quote=OPTIONAL,
         reading=REQUIRED,
     ),
     ("verifier", "unsure"): _field_rules(

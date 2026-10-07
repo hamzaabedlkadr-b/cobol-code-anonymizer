@@ -9,8 +9,8 @@ Safety contract:
   - the model returns semantic proposals, never keep/reject commands or offsets
   - copied person text and evidence quotes are anchored in the supplied input
   - every validated model answer becomes a Decision governed by OUTCOME_RULES
-  - only the policy module can approve leaving candidate text readable
-  - instruction-like input is stopped by an explicit policy gate before the call
+  - only the pipeline and policy can approve leaving candidate text readable
+  - the pipeline stops instruction-like input before calling this module
   - the model sees only the candidate's own line, never neighbouring lines
   - invalid JSON, timeout, or unreachable Ollama routes to anonymization
 
@@ -24,11 +24,12 @@ from __future__ import annotations
 import json
 import hashlib
 import re
+import time
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
 
 from .decisions import Decision, NON_PERSON_CATEGORIES
-from .evidence import assess_name_evidence
 from .llm import (
     NAME_JUDGE_MODEL,
     OLLAMA_HOST,
@@ -36,10 +37,22 @@ from .llm import (
     call_ollama_json,
     model_reference_digest,
 )
-from .policy import apply_name_policy, instruction_text_requires_anonymization
-from .scanner import Finding
+from .llm_cache import PersistentResponseCache, response_cache_key
+from .scanner import Finding, QUOTED_LITERAL_RE, is_comment_line
+from .text_matching import (
+    tolerant_person_occurrences,
+    equivalent_person_occurrences,
+    evidence_quote_is_anchored,
+    normalize_person_text,
+)
 
-JUDGE_PROMPT_VERSION = "exact-text-v1"
+JUDGE_PROMPT_VERSION = "exact-text-v4"
+MAX_PERSON_TEXT_LENGTH = 128
+PERSON_TEXT_RETRY_INSTRUCTION = (
+    "Copy the name exactly as written in the line, including spelling errors. "
+    "Do not correct it."
+)
+
 
 JUDGE_RESPONSE_SCHEMA = {
     "type": "object",
@@ -102,11 +115,18 @@ a place name, not as a reference to a person. Others are genuine person names.
 
 Respond only with the required JSON object. Never return character offsets.
 - decision: "anonymize_whole" when the entire candidate may be a person; \
-"anonymize_part" when only exact words inside it may be a person; \
+"anonymize_part" when only part of a wider candidate is a person; \
 "propose_unchanged" only for a clearly non-person reading; or "uncertain".
 - person_scope: respectively "whole", "partial", "none", or "unsure".
-- person_texts: exact person substrings copied from the highlighted candidate. Use an empty \
-array unless decision is "anonymize_part"; do not normalize or repair the text.
+- person_texts: exact person substrings copied from this source line. Use an empty \
+array only for "propose_unchanged" or "uncertain". For BOTH person decisions, return \
+the complete person name or names that include or touch the highlighted candidate. A \
+returned person substring may extend outside the highlighted candidate; copy the complete \
+name exactly and do not normalize or repair the text.
+- Example: source "* REFERENTE Nora [[Bellini]]" -> "anonymize_whole" with \
+person_texts ["Nora Bellini"].
+- Example: source "* NOTA: [[Ufficio Zeno Maraldi]]" -> "anonymize_part" with \
+person_texts ["Zeno Maraldi"], not the surrounding label.
 - non_person_category: for "propose_unchanged", choose one of "common_word", \
 "date_or_month", "place", "organization", "code_or_identifier", "label_or_header", \
 "abbreviation", "function_words", or "number_or_symbol". Otherwise use "none".
@@ -130,27 +150,107 @@ CANARY_NON_PEOPLE = (
 )
 
 
-def normalize(value: str) -> str:
-    return " ".join(value.split()).casefold()
-
-
-def _exact_occurrences(haystack: str, needle: str) -> list[tuple[int, int]]:
-    """Locate exact, possibly overlapping copies without normalizing source text."""
-
-    if not needle:
-        return []
-    return [
-        (match.start(), match.start() + len(needle))
-        for match in re.finditer(f"(?={re.escape(needle)})", haystack)
-    ]
-
-
 def _is_word_aligned(value: str, start: int, end: int) -> bool:
     """Require copied person text to start and end at Unicode word boundaries."""
 
     left_ok = start == 0 or not (value[start - 1].isalnum() or value[start - 1] == "_")
     right_ok = end == len(value) or not (value[end].isalnum() or value[end] == "_")
     return left_ok and right_ok
+
+
+def unmark_candidate_line(context: str, candidate: str) -> tuple[str, int, int]:
+    """Return the source line and the highlighted candidate's offsets in it.
+
+    The marker is presentation-only input to the model.  We locate the marker
+    once, remove it, and calculate all returned person spans against the
+    immutable source line.  This deliberately rejects malformed snippets
+    rather than guessing where a model answer belongs.
+    """
+
+    if context.count("[[") != 1 or context.count("]]") != 1:
+        raise ValueError("context must contain exactly one highlighted candidate")
+    prefix, marked = context.split("[[", 1)
+    marked_text, suffix = marked.split("]]", 1)
+    if marked_text != candidate:
+        raise ValueError("highlighted context does not contain the candidate exactly")
+    return prefix + marked_text + suffix, len(prefix), len(prefix) + len(marked_text)
+
+
+def _candidate_region(line: str, candidate_start: int, candidate_end: int) -> tuple[int, int]:
+    """Return the one comment or literal region holding the candidate.
+
+    A partial model span is only useful when it stays in the same free-text
+    region as the detected candidate.  Code is intentionally not an expansion
+    region: a candidate there remains safe only as its original full span.
+    """
+
+    if is_comment_line(line):
+        return 0, len(line)
+
+    for match in QUOTED_LITERAL_RE.finditer(line):
+        if match.start() <= candidate_start and candidate_end <= match.end():
+            return match.start(), match.end()
+
+    inline_comment = line.find("*>")
+    if inline_comment != -1 and candidate_start >= inline_comment + 2:
+        return inline_comment, len(line)
+    raise ValueError("highlighted candidate is not in one comment or literal region")
+
+
+class PersonTextNotFoundError(ValueError):
+    """A model copied a person span that does not occur in the source line.
+
+    This is the one validation failure that can safely benefit from a targeted
+    retry: the model may have silently corrected a typo while copying text.
+    Other span failures remain ordinary validation errors.
+    """
+
+
+
+def locate_person_texts(
+    *,
+    candidate: str,
+    context: str,
+    person_texts: tuple[str, ...],
+) -> tuple[tuple[int, int], ...]:
+    """Anchor each returned person text to one safe source-line span.
+
+    The model never supplies offsets.  A valid text must have one
+    case/apostrophe/whitespace-equivalent occurrence on the marked source
+    line, be word-aligned, be no longer than the fixed safety limit, touch the
+    original candidate, and remain in its comment or quoted-literal region.
+    Separate spans are returned as-is; callers must never turn them into one
+    bounding span because that could hide unrelated source text.
+    """
+
+    line, candidate_start, candidate_end = unmark_candidate_line(context, candidate)
+    located: list[tuple[int, int]] = []
+    for person_text in person_texts:
+        matches = equivalent_person_occurrences(line, person_text)
+        if not matches:
+            matches = tolerant_person_occurrences(line, person_text)
+        if not matches:
+            raise PersonTextNotFoundError(
+                "each person_text must occur exactly once in the source line"
+            )
+        if len(matches) != 1:
+            raise ValueError("each person_text must occur exactly once in the source line")
+        start, end = matches[0]
+        if end - start > MAX_PERSON_TEXT_LENGTH:
+            raise ValueError("each person_text must be at most 128 source characters")
+        if not _is_word_aligned(line, start, end):
+            raise ValueError("each person_text must be word-aligned")
+        if end < candidate_start or start > candidate_end:
+            raise ValueError("each person_text must overlap or touch the candidate")
+        located.append((start, end))
+
+    ordered = sorted(located)
+    if any(previous[1] > current[0] for previous, current in zip(ordered, ordered[1:])):
+        raise ValueError("person_texts must have separate non-overlapping source spans")
+    region_start, region_end = _candidate_region(line, candidate_start, candidate_end)
+    if any(start < region_start or end > region_end for start, end in located):
+        raise ValueError("each person_text must stay in the candidate comment or literal")
+    return tuple(located)
 
 
 def validate_judge_response(
@@ -189,34 +289,41 @@ def validate_judge_response(
     ):
         raise ValueError("person_texts must contain only strings")
     person_texts = tuple(raw_person_texts)
-    if len(set(person_texts)) != len(person_texts):
+    if len({normalize_person_text(value) for value in person_texts}) != len(
+        person_texts
+    ):
         raise ValueError("person_texts must not contain duplicates")
+
+    outcome = payload["decision"]
+    evidence_quote = payload["evidence_quote"]
+    if not isinstance(evidence_quote, str):
+        raise ValueError("evidence_quote must be a string")
+
+    # Quotes are audit evidence, not model-provided source locations. Keep a
+    # tolerant anchored quote and drop a bad one; a bad copy must not turn a
+    # semantic answer into a file-level failure.
+    if evidence_quote and not evidence_quote_is_anchored(evidence_quote, context):
+        evidence_quote = ""
 
     decision = Decision(
         occurrence_id=occurrence_id,
         stage="judge",
-        outcome=payload["decision"],
+        outcome=outcome,
         person_scope=payload["person_scope"],
         person_texts=person_texts,
         non_person_category=payload["non_person_category"],
-        evidence_quote=payload["evidence_quote"],
+        evidence_quote=evidence_quote,
         reading=payload["reading"],
         model_digest=model_digest,
         prompt_version=prompt_version,
     )
 
-    for person_text in decision.person_texts:
-        matches = _exact_occurrences(candidate, person_text)
-        if len(matches) != 1:
-            raise ValueError(
-                "each person_text must occur exactly once in the candidate"
-            )
-        start, end = matches[0]
-        if not _is_word_aligned(candidate, start, end):
-            raise ValueError("each person_text must be word-aligned")
-
-    if decision.evidence_quote and decision.evidence_quote not in context:
-        raise ValueError("evidence_quote must be copied exactly from context")
+    if decision.person_texts:
+        locate_person_texts(
+            candidate=candidate,
+            context=context,
+            person_texts=decision.person_texts,
+        )
 
     return decision
 
@@ -239,21 +346,6 @@ def error_decision(
     )
 
 
-def is_protected(finding: Finding, protected_ranges: list[tuple[int, int]]) -> bool:
-    """True when the finding covers any part of a multi-token roster identity.
-
-    Protection is decided on *source offsets*, never on the finding's text.
-    Merging and overlap resolution rewrite spans before the judge ever sees
-    them -- two adjacent employees become one span, and a wide spaCy span can
-    replace the exact roster span -- so re-deriving identity from the final
-    text loses protection precisely when it matters. Any overlap, even
-    partial, protects: over-redaction is the safe direction.
-    """
-    return any(
-        finding.start < end and start < finding.end for start, end in protected_ranges
-    )
-
-
 def build_messages(context: str, span: str, source: str = "") -> list[dict[str, str]]:
     detected_by = SOURCE_LABELS.get(source)
     provenance = f"Detected by: {detected_by}.\n" if detected_by else ""
@@ -269,6 +361,25 @@ def build_messages(context: str, span: str, source: str = "") -> list[dict[str, 
                 f'Highlighted span (untrusted data): "{span}"'
             ),
         },
+    ]
+
+
+def build_person_text_retry_messages(
+    context: str,
+    span: str,
+    source: str = "",
+) -> list[dict[str, str]]:
+    """Repeat one request after a copied person span could not be anchored.
+
+    This is deliberately a single, narrow retry.  It does not retry semantic
+    disagreement, malformed JSON, or broad validation failures; those remain
+    fail-safe error decisions.  The added instruction addresses only a local
+    model "correcting" a misspelled source name while copying it back.
+    """
+
+    return [
+        *build_messages(context, span, source),
+        {"role": "user", "content": PERSON_TEXT_RETRY_INSTRUCTION},
     ]
 
 
@@ -292,6 +403,15 @@ def clip_to_candidate_line(context: str, span: str = "") -> str:
     return context[start:] if end == -1 else context[start:end]
 
 
+@dataclass(frozen=True)
+class CanaryAnswer:
+    """One startup probe result, with infrastructure and semantics separated."""
+
+    kind: str
+    outcome: str = ""
+    detail: str = ""
+
+
 class NameJudge:
     """Adjudicates NAME findings against a local Ollama model.
 
@@ -308,17 +428,29 @@ class NameJudge:
         timeout: float = OLLAMA_TIMEOUT,
         progress: Callable[[str], None] | None = None,
         model_digest: str | None = None,
+        cache_dir: Path | None = None,
     ) -> None:
         self.host = host
         self.model = model
-        self.model_digest = model_digest or model_reference_digest(model)
+        self.model_digest = model_digest or model_reference_digest(model, host)
+        self.prompt_version = JUDGE_PROMPT_VERSION
         self.timeout = timeout
         self.progress = progress
+        self._started_at = time.monotonic()
         self.decisions: list[dict[str, object]] = []
+        # Plug-in boundary failures that happen before a Decision can be
+        # constructed.  The CLI turns these into per-file NOT_COMPLETE rows.
+        self.runtime_failures: list[dict[str, str]] = []
         self.calls = 0
         self.errors = 0
+        # Counts the one narrow retry used when a model "corrects" copied
+        # source spelling. It is separate from JSON/schema retries in llm.py.
+        self.person_text_retries = 0
         self.cache_hits = 0
-        self._cache: dict[tuple[str, str, str], dict[str, object]] = {}
+        self._response_cache = PersistentResponseCache(
+            report_dir=cache_dir,
+            stage="judge",
+        )
 
     def canary_ok(self) -> tuple[bool, str]:
         """Reject degenerate models before they can silently disable the judge.
@@ -330,151 +462,61 @@ class NameJudge:
         Doubles as a warm-up: the first call loads the model, so the timed
         scan that follows does not absorb cold-start latency.
         """
-        answers = []
+        answers: list[CanaryAnswer] = []
         probes = (*CANARY_PEOPLE, *CANARY_NON_PEOPLE)
         for index, context in enumerate(probes, start=1):
-            self._progress(f"startup check {index}/{len(probes)}")
-            decision = self._ask(context)
-            if decision is None:
-                # Stop on the first failure: with a dead server and a 60s
-                # timeout, probing all four would stall startup for minutes.
-                return False, "model did not return valid JSON (is the tag pulled and Ollama running?)"
-            answers.append(decision)
+            self.progress_update(f"startup check {index}/{len(probes)}")
+            answers.append(self._ask(context))
+
+            # A single transient failure must not disable a usable model. Stop
+            # only after infrastructure/schema failures already form a strict
+            # majority; the remaining probe cannot change that conclusion.
+            unusable = [answer for answer in answers if answer.kind in {"transport", "invalid_json"}]
+            if len(unusable) > len(probes) // 2:
+                break
+
+        transport = [answer for answer in answers if answer.kind == "transport"]
+        invalid_json = [answer for answer in answers if answer.kind == "invalid_json"]
+        unusable_count = len(transport) + len(invalid_json)
+        if unusable_count > len(probes) // 2:
+            if len(transport) >= len(invalid_json):
+                detail = transport[0].detail if transport else ""
+                suffix = f": {detail}" if detail else ""
+                return (
+                    False,
+                    "Ollama unreachable or model tag missing; "
+                    f"{unusable_count}/{len(probes)} startup probes failed{suffix}",
+                )
+            return (
+                False,
+                "model returned invalid JSON or schema-invalid JSON for "
+                f"{unusable_count}/{len(probes)} startup probes",
+            )
+
         people = answers[: len(CANARY_PEOPLE)]
         non_people = answers[len(CANARY_PEOPLE):]
-        if all(decision == "propose_unchanged" for decision in people):
+        if len(people) == len(CANARY_PEOPLE) and all(
+            answer.kind == "valid" and answer.outcome == "propose_unchanged"
+            for answer in people
+        ):
             return False, "model proposed unchanged for every real name"
-        if not any(decision == "propose_unchanged" for decision in non_people):
+        if (
+            len(non_people) == len(CANARY_NON_PEOPLE)
+            and all(answer.kind == "valid" for answer in non_people)
+            and not any(answer.outcome == "propose_unchanged" for answer in non_people)
+        ):
             return False, "model never proposed unchanged for a clear non-name"
+
+        validation_errors = sum(
+            answer.kind == "validation_error" for answer in answers
+        )
+        if validation_errors:
+            return (
+                True,
+                f"{validation_errors}/{len(probes)} startup answers failed "
+                "validation and will be treated as safe error decisions",
+            )
         return True, ""
-
-    def filter(
-        self,
-        findings: list[Finding],
-        protected_ranges: list[tuple[int, int]],
-        *,
-        file_sha256: str,
-        name_verifier: object | None = None,
-        watchlist_values: frozenset[str] = frozenset(),
-    ) -> list[Finding]:
-        kept: list[Finding] = []
-        name_findings = [finding for finding in findings if finding.entity_type == "NAME"]
-        total_names = len(name_findings)
-        reviewed_names = 0
-        if total_names:
-            self._progress(f"reviewing {total_names} name candidates")
-        for finding in findings:
-            if finding.entity_type != "NAME":
-                kept.append(finding)
-                continue
-            reviewed_names += 1
-            occurrence, _ = finding.to_candidate_records(
-                file_sha256=file_sha256,
-                detector_version="legacy-judge-input-v1",
-            )
-            snippet = clip_to_candidate_line(finding.context, finding.text)
-            if instruction_text_requires_anonymization(snippet):
-                instruction_policy = apply_name_policy(
-                    occurrence_id=occurrence.occurrence_id,
-                    model_context=snippet,
-                    judge_decision=None,
-                    stronger_person_overlap=False,
-                    unresolved_evidence=True,
-                    code_sensitive_identifier=False,
-                )
-                # The gate and model receive the exact same snippet.  Bypass
-                # the LLM so prompt-like source data cannot influence a call.
-                self._record(
-                    finding,
-                    judge_decision=None,
-                    policy_decision=instruction_policy,
-                    cached=False,
-                    policy_gate="instruction_text",
-                    verifier_decision=None,
-                    evidence_reasons=("evidence:not_evaluated_instruction_gate",),
-                    unresolved_evidence=True,
-                )
-                kept.append(finding)
-                continue
-
-            protected = is_protected(finding, protected_ranges)
-            if protected:
-                self._progress(
-                    f"candidate {reviewed_names}/{total_names}: protected {finding.file}:{finding.line}"
-                )
-                policy_decision = apply_name_policy(
-                    occurrence_id=occurrence.occurrence_id,
-                    model_context=snippet,
-                    judge_decision=None,
-                    protected_identity=True,
-                    stronger_person_overlap=False,
-                    unresolved_evidence=True,
-                    code_sensitive_identifier=False,
-                )
-                self._record(
-                    finding,
-                    judge_decision=None,
-                    policy_decision=policy_decision,
-                    cached=False,
-                    policy_gate="protected_identity",
-                    verifier_decision=None,
-                    evidence_reasons=("evidence:not_evaluated_protected_identity",),
-                    unresolved_evidence=True,
-                )
-                kept.append(finding)
-                continue
-            self._progress(
-                f"candidate {reviewed_names}/{total_names}: judging {finding.file}:{finding.line}"
-            )
-            judge_decision, cached = self._decide(
-                finding,
-                snippet,
-                occurrence.occurrence_id,
-            )
-            unresolved_evidence, evidence_reasons = assess_name_evidence(
-                candidate=finding.text,
-                context=snippet,
-                watchlist_values=watchlist_values,
-            )
-            verifier_decision = None
-            if (
-                name_verifier is not None
-                and judge_decision.outcome == "propose_unchanged"
-                and not unresolved_evidence
-            ):
-                try:
-                    verifier_decision = name_verifier.verify(
-                        occurrence_id=occurrence.occurrence_id,
-                        candidate=finding.text,
-                        context=snippet,
-                        evidence_reasons=evidence_reasons,
-                    )
-                except Exception:  # pragma: no cover - defensive plug-in boundary
-                    # A verifier failure must never make a proposal readable.
-                    self.errors += 1
-                    verifier_decision = None
-            policy_decision = apply_name_policy(
-                occurrence_id=occurrence.occurrence_id,
-                model_context=snippet,
-                judge_decision=judge_decision,
-                verifier_decision=verifier_decision,
-                stronger_person_overlap=False,
-                unresolved_evidence=unresolved_evidence,
-                code_sensitive_identifier=False,
-            )
-            self._record(
-                finding,
-                judge_decision=judge_decision,
-                policy_decision=policy_decision,
-                cached=cached,
-                policy_gate="single_policy",
-                verifier_decision=verifier_decision,
-                evidence_reasons=evidence_reasons,
-                unresolved_evidence=unresolved_evidence,
-            )
-            if policy_decision.outcome != "leave_unchanged":
-                kept.append(finding)
-        return kept
 
     def write_decisions(self, path: Path) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -485,9 +527,16 @@ class NameJudge:
             "prompt_version": JUDGE_PROMPT_VERSION,
             "llm_calls": self.calls,
             "llm_errors": self.errors,
+            "runtime_seconds": round(time.monotonic() - self._started_at, 3),
+            "person_text_retries": self.person_text_retries,
             "cache_hits": self.cache_hits,
             "anonymize_whole": sum(
                 1 for row in self.decisions if row["decision"] == "anonymize_whole"
+            ),
+            "anonymize_and_review": sum(
+                1
+                for row in self.decisions
+                if row["decision"] == "anonymize_and_review"
             ),
             "anonymize_part": sum(
                 1 for row in self.decisions if row["decision"] == "anonymize_part"
@@ -502,19 +551,25 @@ class NameJudge:
         }
         path.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
 
-    def _decide(
+    def decide(
         self,
         finding: Finding,
         snippet: str,
         occurrence_id: str,
     ) -> tuple[Decision, bool]:
-        # Source is part of the key because it is part of the prompt.
-        key = (normalize(finding.text), snippet, finding.source)
-        if key in self._cache:
+        """Return one validated semantic proposal and whether it was cached."""
+
+        messages = build_messages(snippet, finding.text, finding.source)
+        key = response_cache_key(
+            stage="judge", messages=messages, schema=JUDGE_RESPONSE_SCHEMA,
+            options={"temperature": 0}, model_digest=self.model_digest,
+        )
+        cached_payload = self._response_cache.get(key)
+        if cached_payload is not None:
             self.cache_hits += 1
             return (
                 validate_judge_response(
-                    self._cache[key],
+                    cached_payload,
                     occurrence_id=occurrence_id,
                     candidate=finding.text,
                     context=snippet,
@@ -526,7 +581,7 @@ class NameJudge:
         result = call_ollama_json(
             self.host,
             self.model,
-            build_messages(snippet, finding.text, finding.source),
+            messages,
             JUDGE_RESPONSE_SCHEMA,
             timeout=self.timeout,
         )
@@ -556,14 +611,71 @@ class NameJudge:
                 False,
             )
 
+        payload = result.parsed
         try:
             decision = validate_judge_response(
-                result.parsed,
+                payload,
                 occurrence_id=occurrence_id,
                 candidate=finding.text,
                 context=snippet,
                 model_digest=self.model_digest,
             )
+        except PersonTextNotFoundError:
+            # A valid JSON answer may still have copied a misspelled person
+            # span. Ask once for a literal source copy; never broaden this to
+            # other validation errors or repeated model calls.
+            self.person_text_retries += 1
+            retry = call_ollama_json(
+                self.host,
+                self.model,
+                build_person_text_retry_messages(
+                    snippet,
+                    finding.text,
+                    finding.source,
+                ),
+                JUDGE_RESPONSE_SCHEMA,
+                timeout=self.timeout,
+            )
+            self.calls += 1
+            if retry.error:
+                self.errors += 1
+                return (
+                    error_decision(
+                        occurrence_id=occurrence_id,
+                        model_digest=self.model_digest,
+                        error_message=retry.error,
+                    ),
+                    False,
+                )
+            if not retry.schema_ok:
+                self.errors += 1
+                return (
+                    error_decision(
+                        occurrence_id=occurrence_id,
+                        model_digest=self.model_digest,
+                        error_message="invalid response schema",
+                    ),
+                    False,
+                )
+            try:
+                payload = retry.parsed
+                decision = validate_judge_response(
+                    payload,
+                    occurrence_id=occurrence_id,
+                    candidate=finding.text,
+                    context=snippet,
+                    model_digest=self.model_digest,
+                )
+            except (KeyError, TypeError, ValueError) as exc:
+                self.errors += 1
+                return (
+                    error_decision(
+                        occurrence_id=occurrence_id,
+                        model_digest=self.model_digest,
+                        error_message=f"invalid judge answer after person-text retry: {exc}",
+                    ),
+                    False,
+                )
         except (KeyError, TypeError, ValueError) as exc:
             self.errors += 1
             return (
@@ -574,10 +686,14 @@ class NameJudge:
                 ),
                 False,
             )
-        self._cache[key] = dict(result.parsed)
+        # Only a fully validated reply is reusable.  ``payload`` is the retry
+        # answer when a copied person span required the one allowed retry.
+        self._response_cache.put(key, dict(payload))
         return decision, False
 
-    def _ask(self, context: str) -> str | None:
+    def _ask(self, context: str) -> CanaryAnswer:
+        """Run one startup probe without conflating failure categories."""
+
         span = context.split("[[", 1)[1].split("]]", 1)[0]
         result = call_ollama_json(
             self.host,
@@ -586,8 +702,10 @@ class NameJudge:
             JUDGE_RESPONSE_SCHEMA,
             timeout=self.timeout,
         )
-        if result.error or not result.schema_ok:
-            return None
+        if result.error:
+            return CanaryAnswer("transport", detail=result.error)
+        if not result.schema_ok:
+            return CanaryAnswer("invalid_json")
         occurrence_id = hashlib.sha256(
             f"judge-canary:{context}".encode("utf-8")
         ).hexdigest()
@@ -599,87 +717,12 @@ class NameJudge:
                 context=context,
                 model_digest=self.model_digest,
             )
-        except (KeyError, TypeError, ValueError):
-            return None
-        return decision.outcome
+        except (KeyError, TypeError, ValueError) as exc:
+            return CanaryAnswer("validation_error", outcome="error", detail=str(exc))
+        return CanaryAnswer("valid", outcome=decision.outcome)
 
-    def _record(
-        self,
-        finding: Finding,
-        judge_decision: Decision | None,
-        policy_decision: Decision,
-        cached: bool,
-        policy_gate: str = "",
-        verifier_decision: Decision | None = None,
-        evidence_reasons: tuple[str, ...] = (),
-        unresolved_evidence: bool = True,
-    ) -> None:
-        reason_code = (
-            judge_decision.non_person_category
-            if judge_decision is not None
-            and judge_decision.outcome == "propose_unchanged"
-            else ""
-        )
-        error = (
-            judge_decision.error_message
-            if judge_decision is not None and judge_decision.outcome == "error"
-            else ""
-        )
-        verifier_error = (
-            verifier_decision.error_message
-            if verifier_decision is not None and verifier_decision.outcome == "error"
-            else ""
-        )
-        self.decisions.append(
-            {
-                "file": finding.file,
-                "line": finding.line,
-                "column": finding.column,
-                "text": finding.text,
-                "source": finding.source,
-                "decision": policy_decision.outcome,
-                "judge_outcome": (
-                    judge_decision.outcome if judge_decision is not None else "not_called"
-                ),
-                "policy_outcome": policy_decision.outcome,
-                "verifier_outcome": (
-                    verifier_decision.outcome if verifier_decision is not None else "not_called"
-                ),
-                "person_scope": (
-                    judge_decision.person_scope if judge_decision is not None else None
-                ),
-                "person_texts": (
-                    list(judge_decision.person_texts) if judge_decision is not None else []
-                ),
-                "non_person_category": (
-                    judge_decision.non_person_category
-                    if judge_decision is not None
-                    else "none"
-                ),
-                "evidence_quote": (
-                    judge_decision.evidence_quote if judge_decision is not None else ""
-                ),
-                "reading": judge_decision.reading if judge_decision is not None else "",
-                "reason_code": reason_code,
-                "policy_gate": policy_gate,
-                "policy_reading": policy_decision.reading,
-                "unresolved_evidence": unresolved_evidence,
-                "evidence_reasons": list(evidence_reasons),
-                "prompt_version": JUDGE_PROMPT_VERSION,
-                "cached": cached,
-                "error": error,
-                "verifier_error": verifier_error,
-                "context": finding.context,
-                "judge_decision": (
-                    judge_decision.to_dict() if judge_decision is not None else None
-                ),
-                "verifier_decision": (
-                    verifier_decision.to_dict() if verifier_decision is not None else None
-                ),
-                "policy_decision": policy_decision.to_dict(),
-            }
-        )
+    def progress_update(self, message: str) -> None:
+        """Emit judge-stage progress without coordinating any other stage."""
 
-    def _progress(self, message: str) -> None:
         if self.progress is not None:
             self.progress(f"[LLM judge] {message}")
