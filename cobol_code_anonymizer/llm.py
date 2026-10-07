@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import hashlib
 import time
 import urllib.error
 import urllib.request
@@ -27,15 +26,24 @@ OLLAMA_TIMEOUT = 60.0
 OLLAMA_MODEL = NAME_EXTRACT_MODEL
 
 
-def model_reference_digest(model: str) -> str:
-    """Fingerprint an Ollama model tag used by an audited model decision.
+def load_model_digests(host: str, timeout: float = OLLAMA_TIMEOUT) -> dict[str, str]:
+    """Read installed model digests once at the start of a run."""
+    with urllib.request.urlopen(f"{host.rstrip('/')}/api/tags", timeout=timeout) as response:
+        payload = json.loads(response.read().decode("utf-8"))
+    digests = {}
+    for item in payload["models"]:
+        digest = item["digest"]
+        if not isinstance(digest, str) or not digest:
+            raise ValueError("model has no digest")
+        digests[item["name"]] = digest
+        if item["name"].endswith(":latest"):
+            digests[item["name"][:-7]] = digest
+    return digests
 
-    This hashes the configured tag, not the model weights.  Batch manifests
-    later record the digest resolved by ``ollama show`` so a mutable tag cannot
-    silently stand in for a particular production model build.
-    """
 
-    return hashlib.sha256(f"ollama-model-reference:{model}".encode("utf-8")).hexdigest()
+def model_reference_digest(model: str, host: str = OLLAMA_HOST) -> str:
+    """Resolve model contents; the CLI shares one lookup across both roles."""
+    return load_model_digests(host)[model]
 
 
 @dataclass(frozen=True)
