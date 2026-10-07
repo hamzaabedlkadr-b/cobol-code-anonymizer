@@ -1,19 +1,9 @@
-"""Group overlapping findings without discarding detector evidence.
-
-This module separates two concerns that the legacy scanner combined:
-
-* ``build_overlap_groups`` records every directly or transitively overlapping
-  finding, preserving detector provenance for later evidence and policy work.
-* ``select_legacy_findings`` reproduces the scanner's current winner selection
-  exactly. It is temporary compatibility behavior, not the final name policy.
-
-Keeping the compatibility selector explicit lets cleanup paths migrate to
-groups without changing current anonymization output in the same change set.
-"""
+"""Preserve overlap evidence and uncovered whole words of losing findings."""
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
+import re
 from typing import Generic, Iterable, Protocol, TypeVar
 
 
@@ -120,43 +110,36 @@ def build_overlap_groups(findings: Iterable[FindingT]) -> tuple[OverlapGroup[Fin
 
 
 def select_legacy_findings(findings: Iterable[FindingT]) -> tuple[FindingT, ...]:
-    """Reproduce the old priority/length winner algorithm exactly."""
-
-    ordered = sorted(findings, key=finding_order)
+    """Keep priority winners and every uncovered whole word of losing spans."""
+    ordered = sorted(findings, key=lambda item: (
+        -ENTITY_PRIORITY.get(item.entity_type, 0), -(item.end - item.start),
+        item.file, item.start,
+    ))
     kept: list[FindingT] = []
     for finding in ordered:
-        overlaps = [
-            existing
-            for existing in kept
-            if existing.file == finding.file
-            and not (finding.end <= existing.start or finding.start >= existing.end)
-        ]
+        overlaps = [item for item in kept if item.file == finding.file
+                    and item.start < finding.end and finding.start < item.end]
         if not overlaps:
             kept.append(finding)
             continue
-        best = max(
-            overlaps,
-            key=lambda item: (
-                ENTITY_PRIORITY.get(item.entity_type, 0),
-                item.end - item.start,
-            ),
-        )
-        finding_rank = (
-            ENTITY_PRIORITY.get(finding.entity_type, 0),
-            finding.end - finding.start,
-        )
-        best_rank = (
-            ENTITY_PRIORITY.get(best.entity_type, 0),
-            best.end - best.start,
-        )
-        if finding_rank > best_rank:
-            kept = [item for item in kept if item not in overlaps]
-            kept.append(finding)
+        for word in re.finditer(r"\w+(?:(?:''|'|’)[^\W_]+)*", finding.text):
+            start, end = finding.start + word.start(), finding.start + word.end()
+            if any(item.start < end and start < item.end for item in overlaps):
+                continue
+            before = finding.text[:word.start()]
+            line = finding.line + before.count("\n")
+            column = len(before.rsplit("\n", 1)[-1]) + 1 if "\n" in before else finding.column + word.start()
+            marker = "[[" + finding.text + "]]"
+            marked_word = finding.text[:word.start()] + "[[" + word.group() + "]]" + finding.text[word.end():]
+            context = finding.context.replace(marker, marked_word, 1)
+            kept.append(replace(finding, text=word.group(), start=start, end=end,
+                                line=line, column=column, context=context,
+                                logical_context="", logical_candidate=""))
     return tuple(sorted(kept, key=lambda item: (item.file, item.start, item.end)))
 
 
 def resolve_overlaps(findings: Iterable[FindingT]) -> OverlapResolution[FindingT]:
-    """Preserve overlap groups while returning unchanged legacy output."""
+    """Preserve evidence and select non-overlapping spans without losing words."""
 
     materialized = tuple(findings)
     return OverlapResolution(
