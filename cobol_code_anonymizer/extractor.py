@@ -7,6 +7,7 @@ from dataclasses import asdict, dataclass, replace
 from pathlib import Path
 from typing import Callable
 
+from .cobol_layout import SourceLayout
 from .llm import (
     NAME_EXTRACT_MODEL,
     OLLAMA_HOST,
@@ -14,7 +15,11 @@ from .llm import (
     LlmJsonResult,
     call_ollama_json,
 )
+from .logical_text import LogicalPiece, extraction_texts
 from .scanner import Finding, context_for, line_column, unknown_name_scan_ranges
+from .source_reader import split_source_lines
+from .text_matching import tolerant_person_occurrences
+from .policy import apply_name_policy
 
 
 EXTRACTION_SCHEMA = {
@@ -58,17 +63,67 @@ CANARY_NAMES = ("Giorgio Pellegrini", "Federica Mancini")
 
 @dataclass(frozen=True)
 class ExtractionRecord:
+    """One model record and, optionally, its physical source-piece map."""
+
     record_id: int
     line: int
     start: int
     end: int
     text: str
+    pieces: tuple[LogicalPiece, ...] = ()
+
+    def source_spans(self, start: int, end: int) -> tuple[tuple[int, int], ...]:
+        """Return original source spans for a model-relative text span."""
+
+        if not self.pieces:
+            return ((self.start + start, self.start + end),)
+        spans: list[tuple[int, int]] = []
+        for piece in self.pieces:
+            logical_start = max(start, piece.logical_start)
+            logical_end = min(end, piece.logical_end)
+            if logical_start >= logical_end:
+                continue
+            source_start = piece.source_start + logical_start - piece.logical_start
+            source_end = source_start + logical_end - logical_start
+            spans.append((source_start, source_end))
+        return tuple(spans)
 
 
-def build_extraction_records(text: str, scope: str) -> list[ExtractionRecord]:
-    """Split permitted scan ranges into records that never cross a source line."""
+def build_extraction_records(
+    text: str,
+    scope: str,
+    *,
+    layout: SourceLayout | None = None,
+) -> list[ExtractionRecord]:
+    """Build model records for approved free-text source regions.
+
+    Production calls supply a layout, which makes the extractor scan comments
+    (including inline comments), literals, AUTHOR/REMARKS lines, and plain
+    text files while skipping ordinary code.  The compatibility fallback keeps
+    the old scoped-line behavior for direct callers and small unit tests.
+    """
+
     records: list[ExtractionRecord] = []
     record_id = 1
+    if layout is not None:
+        for logical in extraction_texts(layout):
+            if not logical.text.strip() or not logical.pieces:
+                continue
+            first = logical.pieces[0]
+            line, _ = line_column(text, first.source_start)
+            records.append(
+                ExtractionRecord(
+                    record_id,
+                    line,
+                    first.source_start,
+                    first.source_end,
+                    logical.text,
+                    logical.pieces,
+                )
+            )
+            record_id += 1
+        return records
+
     for range_start, range_end in unknown_name_scan_ranges(text, scope):
         cursor = range_start
         while cursor < range_end:
@@ -131,7 +186,8 @@ def locate_all(snippet: str, value: str) -> list[tuple[int, int]]:
             cursor = index + max(1, len(lowered_variant))
         if starts:
             return [(start, start + len(variant)) for start in starts]
-    return []
+    locations = tolerant_person_occurrences(snippet, value)
+    return locations if len(locations) == 1 else []
 
 
 def build_messages(records: list[ExtractionRecord]) -> list[dict[str, str]]:
@@ -187,6 +243,7 @@ class NameExtractor:
         self.chunk_calls = 0
         self.canary_calls = 0
         self.http_attempts = 0
+        self.source_lines = 0
         self.retries = 0
         self.errors = 0
         self.latency_s = 0.0
@@ -194,6 +251,7 @@ class NameExtractor:
         self.completion_tokens = 0
         self.anchored = 0
         self.unlocatable = 0
+        self.review_decisions: list[dict[str, object]] = []
         self.deduplicated = 0
         self.agreements = 0
         self.extractor_only = 0
@@ -238,8 +296,10 @@ class NameExtractor:
         rel_file: str,
         scope: str,
         deterministic: list[Finding] | None = None,
+        layout: SourceLayout | None = None,
     ) -> list[Finding]:
-        records = build_extraction_records(text, scope)
+        self.source_lines += len(split_source_lines(text, keepends=True))
+        records = build_extraction_records(text, scope, layout=layout)
         chunks = chunk_records(records, self.chunk_lines)
         self._progress(
             f"{rel_file}: {len(records)} scoped records, {len(chunks)} LLM chunks"
@@ -282,33 +342,87 @@ class NameExtractor:
 
             items = list(result.parsed.get("names", [])) if result.parsed else []
             anchored, unlocatable = self._anchor_items(chunk, items)
+            for item in unlocatable:
+                affected = [record for record in chunk if record.record_id == item.get("record_id")]
+                for record in affected or chunk:
+                    for start, end in record.source_spans(0, len(record.text)):
+                        line, column = line_column(text, start)
+                        if any(row["file"] == rel_file and row["line"] == line for row in self.review_decisions):
+                            continue
+                        candidate = Finding(rel_file, "NAME", text[start:end], start, end,
+                                            line, column, 0.0, context_for(text, start, end), "llm_extraction")
+                        occurrence, _ = candidate.to_candidate_records(
+                            file_sha256="0" * 64, detector_version="unmatched-extraction-v1")
+                        decision = apply_name_policy(
+                            occurrence_id=occurrence.occurrence_id, model_context=candidate.context,
+                            judge_decision=None, stronger_person_overlap=False,
+                            code_sensitive_identifier=False, unmatched_extraction=True)
+                        self.review_decisions.append({
+                            "file": rel_file, "line": line, "column": column,
+                            "text": str(item.get("text") or "unknown name"),
+                            "context": candidate.context, "source": "llm_extraction",
+                            "policy_outcome": decision.outcome, "policy_reading": decision.reading,
+                            "policy_decision": decision.to_dict(),
+                        })
             anchored_rows = []
             for record in chunk:
                 for local_start, local_end, returned in anchored.get(record.record_id, []):
-                    start = record.start + local_start
-                    end = record.start + local_end
-                    key = (start, end)
-                    if key in seen:
-                        self.deduplicated += 1
+                    source_spans = record.source_spans(local_start, local_end)
+                    if not source_spans:
+                        self.unlocatable += 1
                         continue
-                    seen.add(key)
-                    line, column = line_column(text, start)
-                    findings.append(
-                        Finding(
-                            file=rel_file,
-                            entity_type="NAME",
-                            text=text[start:end],
-                            start=start,
-                            end=end,
-                            line=line,
-                            column=column,
-                            confidence=0.70,
-                            context=context_for(text, start, end),
-                            source="llm_extraction",
+                    for start, end in source_spans:
+                        # Do not turn fixed-width literal padding into a NAME
+                        # replacement. The logical match may end on a piece
+                        # boundary immediately before source whitespace.
+                        while start < end and text[start].isspace():
+                            start += 1
+                        while start < end and text[end - 1].isspace():
+                            end -= 1
+                        if start >= end:
+                            continue
+                        key = (start, end)
+                        if key in seen:
+                            self.deduplicated += 1
+                            continue
+                        seen.add(key)
+                        line, column = line_column(text, start)
+                        findings.append(
+                            Finding(
+                                file=rel_file,
+                                entity_type="NAME",
+                                text=text[start:end],
+                                start=start,
+                                end=end,
+                                line=line,
+                                column=column,
+                                confidence=0.70,
+                                context=context_for(text, start, end),
+                                source="llm_extraction",
+                                logical_context=(
+                                    "'"
+                                    + record.text[:local_start]
+                                    + "[["
+                                    + record.text[local_start:local_end]
+                                    + "]]"
+                                    + record.text[local_end:]
+                                    + "'"
+                                    if len(record.pieces) > 1
+                                    else ""
+                                ),
+                                logical_candidate=(
+                                    record.text[local_start:local_end]
+                                    if len(record.pieces) > 1
+                                    else ""
+                                ),
+                            )
                         )
-                    )
                     anchored_rows.append(
-                        {"record_id": record.record_id, "returned": returned, "start": start, "end": end}
+                        {
+                            "record_id": record.record_id,
+                            "returned": returned,
+                            "spans": [list(span) for span in source_spans],
+                        }
                     )
             self.anchored += len(anchored_rows)
             self.unlocatable += len(unlocatable)
@@ -339,6 +453,8 @@ class NameExtractor:
             "canary_status": self.canary_status,
             "canary_reason": self.canary_reason,
             "chunk_lines": self.chunk_lines,
+            "source_lines": self.source_lines,
+            "calls_per_1000_source_lines": self.calls_per_1000_source_lines,
             "chunk_calls": self.chunk_calls,
             "canary_calls": self.canary_calls,
             "http_attempts": self.http_attempts,
@@ -349,6 +465,8 @@ class NameExtractor:
             "completion_tokens": self.completion_tokens,
             "anchored": self.anchored,
             "unlocatable": self.unlocatable,
+            "unmatched_lines": len(self.review_decisions),
+            "review_decisions": self.review_decisions,
             "deduplicated": self.deduplicated,
             "detector_agreements": self.agreements,
             "extractor_only": self.extractor_only,
@@ -357,6 +475,14 @@ class NameExtractor:
             "chunks": self.chunks,
         }
         path.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
+
+    @property
+    def calls_per_1000_source_lines(self) -> float:
+        """Return the extractor call density used for batch runtime planning."""
+
+        if not self.source_lines:
+            return 0.0
+        return self.chunk_calls * 1000 / self.source_lines
 
     def _call(self, records: list[ExtractionRecord], canary: bool) -> LlmJsonResult:
         result = call_ollama_json(

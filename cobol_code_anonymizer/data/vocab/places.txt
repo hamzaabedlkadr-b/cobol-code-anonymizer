@@ -1,0 +1,25 @@
+# Small standard Italian geographic vocabulary.  Projects may not add learned
+# terms here: this list is versioned reviewable policy data.
+ABRUZZO
+BASILICATA
+CALABRIA
+CAMPANIA
+EMILIA
+FRIULI
+LAZIO
+LIGURIA
+LOMBARDIA
+MARCHE
+MOLISE
+PIEMONTE
+PUGLIA
+SARDEGNA
+SICILIA
+TOSCANA
+TRENTINO
+UMBRIA
+VALLE
+VENETO
+ROMA
+MILANO
+NAPOLI
