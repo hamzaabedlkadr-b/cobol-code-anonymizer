@@ -4,8 +4,12 @@ from __future__ import annotations
 
 import argparse
 import csv
+from dataclasses import replace
+import hashlib
 import json
+import re
 import sys
+import unicodedata
 from pathlib import Path
 
 from . import __version__
@@ -15,25 +19,46 @@ from .llm import (
     NAME_VERIFIER_MODEL,
     OLLAMA_HOST,
     OLLAMA_TIMEOUT,
+    load_model_digests,
 )
 from .replacements import (
     ValueGroup,
     apply_replacements,
+    copy_file_atomically,
     entity_sort_order,
     group_findings,
     group_key,
+    finding_key,
     load_mapping,
+    repair_written_files,
     suggested_replacement,
+    replacement_spans,
     write_mapping_template,
 )
-from .pipeline import scan_path
-from .scanner import DEFAULT_ENTITIES, Finding, write_json
+from .pipeline import review_name_findings, scan_path
+from .preflight import run_preflight
+from .review_queue import write_review_queue_csv
+from .review_decisions import load_review_decisions
+from .residual import residual_replacements, scan_written_output
+from .text_matching import output_span_to_source
+from .policy import apply_name_policy
+from .scanner import (
+    DEFAULT_ENTITIES,
+    Finding,
+    iter_all_files,
+    is_text_candidate,
+    load_names,
+    relative_name,
+    write_json,
+)
 
 
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     raw_args = list(argv) if argv is not None else sys.argv[1:]
     args = parser.parse_args(raw_args)
+    if args.sample_unchanged < 0:
+        parser.error("--sample-unchanged must be zero or greater")
     apply_mode_preset(args, raw_args)
     # Keep parsing the retired flag so existing automation receives a clear
     # migration error instead of silently changing how private data is read.
@@ -55,15 +80,49 @@ def main(argv: list[str] | None = None) -> int:
     if input_path.is_dir() and output_dir == input_path:
         parser.error("--out-dir must be different from the input folder")
 
+    # Reports are local audit material, never part of the shareable output.
+    # Keeping the default beside (rather than inside) the output makes an
+    # accidental upload of maps and decisions impossible by construction.
+    report_dir = (
+        args.report_dir.resolve()
+        if args.report_dir
+        else Path(f"{output_dir}_reports")
+    )
+    if is_path_inside(report_dir, output_dir):
+        parser.error("--report-dir must be outside --out-dir")
+    if args.preflight:
+        return run_preflight_cli(
+            parser,
+            args,
+            input_path,
+            output_dir,
+            report_dir,
+        )
+    if output_dir.exists() and not output_dir.is_dir():
+        parser.error(f"--out-dir is not a folder: {output_dir}")
+    if output_dir.exists() and any(output_dir.iterdir()):
+        if not args.overwrite:
+            parser.error(
+                f"Output folder is not empty: {output_dir}; use --overwrite to replace it"
+            )
+        import shutil
+
+        shutil.rmtree(output_dir)
+
     entities = {"NAME"} if args.names_only else set(args.entities) if args.entities else set(DEFAULT_ENTITIES)
     extra_watchlists = [path.resolve() for path in args.watchlist]
-    report_dir = args.report_dir.resolve() if args.report_dir else output_dir
-    skip_roots = [path for path in (output_dir, report_dir) if path.exists()]
+    skip_roots = [output_dir, report_dir]
+    source_hashes: dict[str, str] = {}
     diagnostics: list[str] = []
     not_complete_files: list[dict[str, str]] = []
+    skipped_files: list[dict[str, str]] = []
+    path_review_files: list[dict[str, str]] = []
     # B2 collects correction items in memory. A later review-loop phase will
     # group and write them; they never change today's anonymization output.
     correction_review_items = []
+    identifier_review_decisions: list[dict[str, object]] = []
+    resolved_review_files: list[str] = []
+    review_answers = load_review_decisions(report_dir / "review_decisions.csv")
     print(f"Mode: {args.mode}")
     if any(
         item == "--judge-policy" or item.startswith("--judge-policy=")
@@ -92,6 +151,8 @@ def main(argv: list[str] | None = None) -> int:
             report_dir.mkdir(parents=True, exist_ok=True)
             audit_path = report_dir / "extraction_decisions.json"
             name_extractor.write_audit(audit_path)
+            startup_failures = model_startup_failures(input_path, "extractor", extract_reason)
+            write_not_complete_files_report(report_dir, startup_failures)
             print(f"Error: name extraction startup check failed ({extract_reason}).")
             print(f"Incomplete extraction audit: {audit_path}")
             return 1
@@ -105,13 +166,27 @@ def main(argv: list[str] | None = None) -> int:
         judge_model = args.name_judge_model or NAME_JUDGE_MODEL
         judge_host = args.ollama_host or OLLAMA_HOST
         judge_timeout = args.llm_timeout if args.llm_timeout is not None else OLLAMA_TIMEOUT
+        try:
+            model_digests = load_model_digests(judge_host, judge_timeout)
+            judge_digest = model_digests[judge_model]
+            verifier_digest = model_digests[args.name_verifier_model or NAME_VERIFIER_MODEL]
+        except (OSError, ValueError, KeyError) as exc:
+            write_not_complete_files_report(
+                report_dir, model_startup_failures(input_path, "judge", str(exc))
+            )
+            print(f"NOT_COMPLETE: cannot read model digests: {exc}")
+            return 1
         name_judge = NameJudge(
             judge_host,
             judge_model,
             timeout=judge_timeout,
+            cache_dir=report_dir,
+            model_digest=judge_digest,
         )
         judge_ok, judge_reason = name_judge.canary_ok()
         if judge_ok:
+            if judge_reason:
+                print(f"Warning: name judge startup check: {judge_reason}")
             from .verifier import NameVerifier
 
             verifier_model = args.name_verifier_model or NAME_VERIFIER_MODEL
@@ -119,15 +194,20 @@ def main(argv: list[str] | None = None) -> int:
                 judge_host,
                 verifier_model,
                 timeout=judge_timeout,
+                cache_dir=report_dir,
+                model_digest=verifier_digest,
             )
             print(f"Name judge enabled: {judge_model} at {judge_host}")
             print(f"Name verifier enabled: {verifier_model} at {judge_host}")
         else:
-            # Never continue with a judge that cannot be trusted: a model that
-            # answers the same way to everything looks like it works while
-            # adding nothing, so fall back to keeping every candidate.
-            print(f"Warning: name judge disabled ({judge_reason}). Keeping all name candidates.")
-            name_judge = None
+            # An enabled model is part of the safety boundary.  If it cannot
+            # start, no source is released with a partial decision pipeline.
+            report_dir.mkdir(parents=True, exist_ok=True)
+            startup_failures = model_startup_failures(input_path, "judge", judge_reason)
+            status_path = write_not_complete_files_report(report_dir, startup_failures)
+            print(f"Error: name judge startup check failed ({judge_reason}).")
+            print(f"File status report: {status_path}")
+            return 1
 
     findings = scan_path(
         input_path=input_path,
@@ -135,19 +215,43 @@ def main(argv: list[str] | None = None) -> int:
         extra_watchlists=extra_watchlists,
         include_default_names=not args.no_default_name_watchlist,
         detect_unknown_names=args.detect_unknown_names,
+        case_shape_enabled=not args.no_case_shape,
         unknown_name_min_length=args.unknown_name_min_length,
         name_scope=args.name_scope,
         skip_root=skip_roots,
+        source_hashes=source_hashes,
         use_presidio=not args.no_presidio,
         presidio_model=args.presidio_model,
         diagnostics=diagnostics,
         not_complete_files=not_complete_files,
         review_items=correction_review_items,
+        identifier_review_decisions=identifier_review_decisions,
+        resolved_review_files=resolved_review_files,
+        review_answers=review_answers,
         name_extractor=name_extractor,
         name_judge=name_judge,
         name_verifier=name_verifier,
         deterministic_names_enabled=args.mode != "extraction-only",
         progress=print_progress,
+    )
+    # A model error is a technical failure, not a semantic "not a person"
+    # answer.  Mark the affected source file incomplete before any writer can
+    # run; the existing judge/verifier/policy decisions remain unchanged.
+    add_model_runtime_failures(not_complete_files, name_judge)
+    if name_extractor is not None and not name_extractor.complete:
+        for failure in model_startup_failures(
+            input_path, "extractor", name_extractor.failure_reason or "extraction failed"
+        ):
+            not_complete_files.append(failure)
+
+    path_review_files.extend(
+        find_path_review_files(
+            input_path,
+            extra_watchlists,
+            findings,
+            include_default_names=not args.no_default_name_watchlist,
+            skip_roots=skip_roots,
+        )
     )
     groups = group_findings(findings)
 
@@ -164,17 +268,37 @@ def main(argv: list[str] | None = None) -> int:
         findings,
         diagnostics,
     )
+    hidden_pair_path, hidden_pair_count = write_hidden_pairs_csv(
+        report_dir / "hidden_pairs.csv",
+        findings,
+    )
+    write_audit_rows_csv(
+        report_dir / "path_review.csv",
+        path_review_files,
+        fieldnames=("path", "reason"),
+        path_key="file",
+    )
+    if hidden_pair_count:
+        print(
+            f"Hidden watchlist pairs: {hidden_pair_path} "
+            f"({hidden_pair_count} distinct pair(s))"
+        )
 
     extraction_incomplete = False
     if name_extractor is not None:
         extraction_path = report_dir / "extraction_decisions.json"
         name_extractor.write_audit(extraction_path)
         extraction_incomplete = not name_extractor.complete
+        calls_per_1000 = getattr(name_extractor, "calls_per_1000_source_lines", 0.0)
+        if not isinstance(calls_per_1000, (int, float)):
+            calls_per_1000 = 0.0
         print(
             f"\nName extraction: {name_extractor.chunk_calls} calls, "
+            f"{calls_per_1000:.3f} calls per 1,000 source lines, "
             f"{name_extractor.http_attempts} HTTP attempts, "
             f"{name_extractor.anchored} anchored, "
             f"{name_extractor.unlocatable} unlocatable, "
+            f"{len(getattr(name_extractor, 'review_decisions', []))} lines need review, "
             f"{name_extractor.errors} errors."
         )
         if extraction_incomplete and name_extractor.failure_reason:
@@ -184,6 +308,9 @@ def main(argv: list[str] | None = None) -> int:
     if name_judge is not None:
         judge_path = report_dir / "judge_decisions.json"
         name_judge.write_decisions(judge_path)
+        if name_verifier is not None and hasattr(name_verifier, "write_summary"):
+            verifier_path = report_dir / "verifier_summary.json"
+            name_verifier.write_summary(verifier_path)
         anonymized = sum(
             1
             for row in name_judge.decisions
@@ -198,13 +325,29 @@ def main(argv: list[str] | None = None) -> int:
             for row in name_judge.decisions
             if row.get("policy_gate") == "instruction_text"
         )
+        invalid_by_file = invalid_answer_counts_by_file(name_judge.decisions)
+        invalid_answers = sum(invalid_by_file.values())
         print(
             f"\nName judge: {name_judge.calls} calls, "
+            f"{getattr(name_judge, 'person_text_retries', 0)} person-text retries, "
             f"{name_judge.cache_hits} cached, "
-            f"{name_judge.errors} errors, {anonymized} candidates marked for anonymization, "
+            f"{name_judge.errors} errors, {invalid_answers} invalid answers, "
+            f"{anonymized} candidates marked for anonymization, "
             f"{left_unchanged} approved unchanged, "
             f"{instruction_anonymized} anonymized by the instruction-text policy gate."
         )
+        if name_verifier is not None:
+            print(
+                f"Name verifier: {name_verifier.calls} calls, "
+                f"{getattr(name_verifier, 'cache_hits', 0)} cached, "
+                f"{name_verifier.errors} errors."
+            )
+        if invalid_by_file:
+            details = ", ".join(
+                f"{file_name}={count}"
+                for file_name, count in sorted(invalid_by_file.items())
+            )
+            print(f"Invalid model answers by file: {details}")
         if left_unchanged:
             print(f"Candidates approved unchanged by the full policy: {judge_path}")
         if instruction_anonymized:
@@ -212,6 +355,25 @@ def main(argv: list[str] | None = None) -> int:
                 f"{instruction_anonymized} candidate(s) on instruction-like source lines "
                 f"bypassed the judge and stayed anonymized: {judge_path}"
             )
+    review_decisions = [
+        *identifier_review_decisions,
+        *(getattr(name_extractor, "review_decisions", []) if name_extractor is not None else []),
+        *(name_judge.decisions if name_judge is not None else []),
+    ]
+    review_required_files = {
+        str(row.get("file"))
+        for row in review_decisions
+        if str(row.get("policy_outcome") or row.get("decision") or "")
+        == "review_required"
+        and str(row.get("file") or "")
+    }
+    if review_decisions:
+        review_queue_path = report_dir / "review_queue.csv"
+        review_group_count = write_review_queue_csv(review_queue_path, review_decisions)
+        print(
+            f"Review queue: {review_queue_path} "
+            f"({review_group_count} grouped item(s))"
+        )
 
     if name_extractor is not None or name_judge is not None:
         review_path = report_dir / "llm_name_review.csv"
@@ -228,12 +390,27 @@ def main(argv: list[str] | None = None) -> int:
 
     if not_complete_files:
         status_path = write_not_complete_files_report(report_dir, not_complete_files)
-        print(
-            f"\nNOT_COMPLETE: {len(not_complete_files)} file(s) could not be "
-            "safely decoded. No mapping or anonymized output was created."
-        )
+        model_failures = [
+            row
+            for row in not_complete_files
+            if str(row.get("reason", "")).endswith(
+                ("_startup_failure", "_runtime_failure")
+            )
+        ]
+        if model_failures:
+            reasons = "; ".join(
+                sorted({str(row.get("message", "model failure")) for row in model_failures})
+            )
+            print(
+                f"\nNOT_COMPLETE: {len(not_complete_files)} file(s) withheld because "
+                f"the model was unavailable or failed: {reasons}."
+            )
+        else:
+            print(
+                f"\nNOT_COMPLETE: {len(not_complete_files)} file(s) could not be "
+                "safely decoded. No mapping or anonymized output was created."
+            )
         print(f"File status report: {status_path}")
-        return 1
 
     if args.names_only:
         names = [finding for finding in findings if finding.entity_type == "NAME"]
@@ -264,7 +441,9 @@ def main(argv: list[str] | None = None) -> int:
 
     loaded_mapping = load_mapping(args.map_file.resolve() if args.map_file else None)
     if args.create_map:
-        map_path = args.create_map.resolve()
+        # Mapping templates contain original values and are therefore local
+        # report material, even when the caller supplied another path.
+        map_path = report_dir / args.create_map.name
         write_mapping_template(map_path, groups, loaded_mapping, args.salt)
         print(f"\nMapping template written to: {map_path}")
         print("Edit the replacement column, then run again with --map-file.")
@@ -272,40 +451,237 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.scan_only:
         print(f"\nFindings JSON written to: {report_dir / 'anonymization_findings.json'}")
-        return 0
+        return 1 if not_complete_files else 0
 
-    if not findings:
-        print("\nNo findings to anonymize.")
-        return 0
-
-    replacements = choose_replacements(groups, loaded_mapping, args.salt, args.auto)
-    if not replacements:
+    replacements = (
+        choose_replacements(groups, loaded_mapping, args.salt, args.auto)
+        if findings
+        else {}
+    )
+    if findings and not replacements:
         print("\nNo replacements selected; no anonymized output was written.")
         return 0
 
+    import shutil
+    staging_dir = report_dir / "staging"
+    if staging_dir.exists():
+        shutil.rmtree(staging_dir)
     write_failures: list[dict[str, str]] = []
+    staged_files: list[str] = []
+    line_counts: dict[str, int] = {}
+    replaced_spans = replacement_spans(findings, replacements)
+    blocked_files = {row["file"] for row in not_complete_files}
+    for watchlist_path in extra_watchlists:
+        if watchlist_path.exists() and (watchlist_path == input_path or
+                input_path.is_dir() and is_path_inside(watchlist_path, input_path)):
+            relative_watchlist = relative_name(watchlist_path, input_path)
+            blocked_files.add(relative_watchlist)
+            skipped_files.append({"file": relative_watchlist, "reason": "watchlist_input"})
     changed_files, replacement_count = apply_replacements(
+        input_path, staging_dir, findings, replacements,
+        not_complete_files=write_failures, skipped_files=skipped_files,
+        blocked_files=blocked_files, written_files=staged_files,
+        line_counts=line_counts, skip_roots=skip_roots, source_hashes=source_hashes,
+    )
+    residual_names = load_names(
+        extra_watchlists,
+        include_default=not args.no_default_name_watchlist,
+    )
+    residual_initial = scan_written_output(
+        staging_dir,
+        residual_names,
+        findings,
+        review_answers=review_answers,
+        replaced_spans=replaced_spans,
+    )
+    write_failures.extend(residual_initial.errors)
+    residual_for_repair = list(residual_initial.replaceable)
+    adjudicated_for_final = [*findings]
+    if residual_for_repair and name_judge is not None:
+        routed: list[Finding] = []
+        for relative in sorted({finding.file for finding in residual_for_repair}):
+            file_candidates = [
+                finding for finding in residual_for_repair if finding.file == relative
+            ]
+            try:
+                file_hash = hashlib.sha256((staging_dir / relative).read_bytes()).hexdigest()
+            except OSError as exc:
+                write_failures.append(
+                    {
+                        "file": relative,
+                        "status": "NOT_COMPLETE",
+                        "reason": "residual_read_error",
+                        "message": str(exc),
+                    }
+                )
+                continue
+            routed.extend(
+                review_name_findings(
+                    file_candidates,
+                    [],
+                    file_sha256=file_hash,
+                    name_judge=name_judge,
+                    name_verifier=name_verifier,
+                    review_items=correction_review_items,
+                )
+            )
+        # Every routed occurrence is now adjudicated: a verified non-person
+        # proposal may remain readable, while every other returned span is
+        # repaired below.
+        for finding in residual_for_repair:
+            mapped = output_span_to_source(finding.start, finding.end, replaced_spans.get(finding.file, []))
+            if mapped is not None:
+                adjudicated_for_final.append(replace(finding, start=mapped[0], end=mapped[1]))
+        residual_for_repair = routed
+    repaired_files = 0
+    repaired_occurrences = 0
+    if residual_for_repair:
+        repaired_files, repaired_occurrences = repair_written_files(
+            staging_dir,
+            residual_for_repair,
+            residual_replacements(tuple(residual_for_repair)),
+            not_complete_files=write_failures,
+            line_counts=line_counts,
+        )
+        repair_map = residual_replacements(tuple(residual_for_repair))
+        additions = []
+        for finding in residual_for_repair:
+            mapped = output_span_to_source(finding.start, finding.end, replaced_spans.get(finding.file, []))
+            if mapped is not None:
+                additions.append(replace(finding, start=mapped[0], end=mapped[1]))
+        for file, spans in replacement_spans(additions, repair_map).items():
+            replaced_spans.setdefault(file, []).extend(spans)
+    review_required_files.update(finding.file for finding in residual_initial.code_sensitive)
+    residual_final = scan_written_output(
+        staging_dir,
+        residual_names,
+        adjudicated_for_final,
+        review_answers=review_answers,
+        replaced_spans=replaced_spans,
+    )
+    write_failures.extend(residual_final.errors)
+    remaining_residual_files = {
+        finding.file
+        for finding in (*residual_final.replaceable, *residual_final.code_sensitive)
+    }
+    review_required_files.update(remaining_residual_files)
+    write_residual_report(
+        report_dir / "residual_findings.json",
+        residual_initial,
+        residual_final,
+        repaired_files,
+        repaired_occurrences,
+    )
+    # Every residual requiring a human answer has an explicit policy record.
+    residual_review_decisions = []
+    for finding in (*residual_initial.code_sensitive, *residual_final.replaceable, *residual_final.code_sensitive):
+        occurrence, _ = finding.to_candidate_records(file_sha256="0" * 64, detector_version="residual-review-v1")
+        decision = apply_name_policy(
+            occurrence_id=occurrence.occurrence_id, model_context=finding.context, judge_decision=None,
+            stronger_person_overlap=False, code_sensitive_identifier=finding in residual_initial.code_sensitive or finding in residual_final.code_sensitive,
+            residual_unresolved=finding in residual_final.replaceable)
+        residual_review_decisions.append({**finding.to_dict(), "policy_outcome": decision.outcome,
+                                          "policy_reading": decision.reading, "policy_decision": decision.to_dict()})
+    write_review_queue_csv(report_dir / "review_queue.csv", [
+        *identifier_review_decisions, *residual_review_decisions,
+        *(getattr(name_extractor, "review_decisions", []) if name_extractor is not None else []),
+        *(name_judge.decisions if name_judge is not None else []),
+    ])
+    add_model_runtime_failures(not_complete_files, name_judge)
+    if name_judge is not None:
+        name_judge.write_decisions(report_dir / "judge_decisions.json")
+    if name_verifier is not None and hasattr(name_verifier, "write_summary"):
+        name_verifier.write_summary(report_dir / "verifier_summary.json")
+    not_complete_files.extend(write_failures)
+    write_failures.clear()
+    failed_files = {row["file"] for row in not_complete_files}
+    path_files = {row["file"] for row in path_review_files}
+    review_files = (review_required_files | path_files) - failed_files
+    passed_files = set(staged_files) - failed_files - review_files
+    _move_checked_files(staging_dir, report_dir / "needs_review", review_files, write_failures)
+    _move_checked_files(staging_dir, output_dir, passed_files, write_failures)
+    not_complete_files.extend(write_failures)
+    failed_files = {row["file"] for row in not_complete_files}
+    # Failed files stay out of both release and review trees.
+    for failure in not_complete_files:
+        for directory in (staging_dir, output_dir, report_dir / "needs_review"):
+            path = directory / failure["file"]
+            if path.is_file():
+                path.unlink()
+    written_files = [file for file in sorted(passed_files) if (output_dir / file).is_file()]
+    if args.sample_unchanged:
+        replaced_lines = {(finding.file, line)
+                          for finding in findings if finding_key(finding) in replacements
+                          for line in range(finding.line, finding.line + finding.text.count("\n") + 1)}
+        replaced_lines.update((finding.file, finding.line) for finding in residual_for_repair)
+        sample_path = report_dir / "sample_check.csv"
+        sampled = write_sample_check(sample_path, output_dir, written_files, replaced_lines,
+                                     args.sample_unchanged, args.sample_seed)
+        print(f"Sample check: {sample_path} ({sampled} unchanged lines)")
+    write_audit_rows_csv(report_dir / "skipped_files.csv", skipped_files,
+                         fieldnames=("path", "reason"), path_key="file")
+    if not_complete_files:
+        status_path = write_not_complete_files_report(report_dir, not_complete_files)
+        print(f"NOT_COMPLETE: {len(failed_files)} file(s) could not be safely written or checked; withheld.")
+        print(f"File status report: {status_path}")
+    write_mapping_template(report_dir / "replacement_map.csv", groups, replacements, args.salt)
+    write_out_manifest(
+        report_dir / "out_manifest.csv",
         input_path,
         output_dir,
-        findings,
-        replacements,
-        not_complete_files=write_failures,
+        path_review_files,
+        skipped_files,
+        not_complete_files,
+        review_required_files,
+        skip_roots=skip_roots,
     )
-    if write_failures:
-        status_path = write_not_complete_files_report(report_dir, write_failures)
-        print(
-            f"\nNOT_COMPLETE: {len(write_failures)} file(s) could not be "
-            "safely written. Their previous output, if any, was not overwritten."
-        )
-        print(f"File status report: {status_path}")
-        return 1
-    write_mapping_template(output_dir / "replacement_map.csv", groups, replacements, args.salt)
     print(f"\nAnonymized output written to: {output_dir}")
+    print(f"Shareable: {output_dir} ({len(written_files)} files). Local only: {report_dir}")
     print(f"Changed files: {changed_files}")
     print(f"Applied replacements: {replacement_count}")
+    print(f"Lines newly past column 72: {sum(line_counts.values())}")
+    (report_dir / "layout_summary.json").write_text(json.dumps({"lines_newly_past_column_72": sum(line_counts.values()), "files": line_counts}, indent=2), encoding="utf-8")
     print(f"Findings JSON: {report_dir / 'anonymization_findings.json'}")
-    print(f"Replacement map: {output_dir / 'replacement_map.csv'}")
-    return 0
+    print(f"Replacement map: {report_dir / 'replacement_map.csv'}")
+    if review_required_files:
+        print(f"{len(review_required_files)} files need review before sharing.")
+    return 1 if not_complete_files or review_required_files else 0
+
+
+def write_sample_check(
+    path: Path, output_dir: Path, released_files: list[str],
+    replaced_lines: set[tuple[str, int]], count: int, seed: int | None,
+) -> int:
+    """Uniformly sample unchanged comment/literal lines with bounded memory."""
+    import random
+    from .cobol_layout import classify_source, COMMENT, LITERAL
+    from .source_reader import read_source, split_source_lines
+
+    randomizer = random.Random(seed)
+    sample = []
+    eligible_count = 0
+    for file in sorted(released_files):
+        source = read_source(output_dir / file)
+        layout = classify_source(source, source_path=output_dir / file)
+        eligible_lines = {region.line for region in layout.regions_of_kind(COMMENT, LITERAL)}
+        lines = split_source_lines(source.text)
+        for line in sorted(eligible_lines):
+            if (file, line) in replaced_lines:
+                continue
+            eligible_count += 1
+            row = {"file": file, "line": line, "text": lines[line - 1], "name_found": ""}
+            if len(sample) < count:
+                sample.append(row)
+            else:
+                slot = randomizer.randrange(eligible_count)
+                if slot < count:
+                    sample[slot] = row
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("w", newline="", encoding="utf-8") as handle:
+        writer = csv.DictWriter(handle, fieldnames=("file", "line", "text", "name_found"))
+        writer.writeheader()
+        writer.writerows(sorted(sample, key=lambda row: (row["file"], row["line"])))
+    return len(sample)
 
 
 def write_not_complete_files_report(
@@ -365,6 +741,20 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--out-dir", type=Path, help="Folder for anonymized copies.")
     parser.add_argument("--report-dir", type=Path, help="Folder for anonymization_findings.json.")
+    parser.add_argument("--sample-unchanged", type=int, default=0,
+                        help="Sample this many unchanged comment/literal lines from released files.")
+    parser.add_argument("--sample-seed", type=int,
+                        help="Seed for a repeatable unchanged-line sample.")
+    parser.add_argument(
+        "--preflight",
+        action="store_true",
+        help="Count deterministic and spaCy candidates without writing anonymized output or calling Ollama.",
+    )
+    parser.add_argument(
+        "--overwrite",
+        action="store_true",
+        help="Allow replacing an existing non-empty output folder; old contents are removed first.",
+    )
     parser.add_argument(
         "--entities",
         nargs="+",
@@ -403,9 +793,14 @@ def build_parser() -> argparse.ArgumentParser:
         "--detect-unknown-names",
         action="store_true",
         help=(
-            "Also report uppercase surname-like tokens in comments/contact text even when they are "
-            "not in Presidio or a watchlist. Review these before anonymizing."
+            "Enable the older, noisy unknown-name detector for uppercase surname-like tokens. "
+            "It can produce many technical false positives; review all of its candidates."
         ),
+    )
+    parser.add_argument(
+        "--no-case-shape",
+        action="store_true",
+        help="Disable the default mixed-case-name detector for mostly uppercase comments and literals.",
     )
     parser.add_argument(
         "--unknown-name-min-length",
@@ -466,7 +861,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--name-verifier-model",
         help=(
             "Override the independent verifier model. It is called only after a "
-            "fully resolved non-person judge proposal."
+            "non-person judge proposal that could leave text readable."
         ),
     )
     parser.add_argument(
@@ -541,6 +936,371 @@ def extraction_chunk_size(value: str) -> int:
     if parsed < 2:
         raise argparse.ArgumentTypeError("must be at least 2")
     return parsed
+
+
+def run_preflight_cli(
+    parser: argparse.ArgumentParser,
+    args: argparse.Namespace,
+    input_path: Path,
+    output_dir: Path,
+    report_dir: Path,
+) -> int:
+    """Run aggregate candidate measurement without touching the output folder."""
+
+    missing = [path for path in args.watchlist if not path.exists()]
+    if missing:
+        parser.error("watchlist file does not exist: " + ", ".join(map(str, missing)))
+
+    report_dir.mkdir(parents=True, exist_ok=True)
+    skip_roots = [path for path in (output_dir, report_dir) if path.exists()]
+    counts = run_preflight(
+        input_path,
+        watchlist_paths=[path.resolve() for path in args.watchlist],
+        include_default_names=not args.no_default_name_watchlist,
+        name_scope=args.name_scope,
+        use_presidio=not args.no_presidio,
+        presidio_model=args.presidio_model,
+        skip_roots=skip_roots,
+        case_shape_enabled=not args.no_case_shape,
+    )
+    report_path = report_dir / "preflight.txt"
+    report = counts.report_text()
+    report_path.write_text(report, encoding="utf-8")
+    print(report, end="")
+    print(f"preflight_report={report_path}")
+    return 0
+
+
+def is_path_inside(path: Path, parent: Path) -> bool:
+    """Return whether ``path`` is the parent itself or is nested below it."""
+
+    try:
+        path.relative_to(parent)
+    except ValueError:
+        return False
+    return True
+
+
+def model_startup_failures(input_path: Path, stage: str, reason: str) -> list[dict[str, str]]:
+    """Mark every source that would have been scanned when a model cannot start."""
+
+    files = [path for path in iter_all_files(input_path) if is_text_candidate(path)]
+    if not files:
+        files = [input_path]
+    return [
+        {
+            "file": relative_name(path, input_path) if path != input_path else path.name,
+            "status": "NOT_COMPLETE",
+            "reason": f"{stage}_startup_failure",
+            "message": str(reason),
+        }
+        for path in files
+    ]
+
+
+def add_model_runtime_failures(
+    not_complete_files: list[dict[str, str]],
+    name_judge: object | None,
+) -> None:
+    """Promote only unavailable-model failures to per-file NOT_COMPLETE rows.
+
+    A schema or anchoring error is a bad answer for one occurrence, not a bad
+    file.  Policy keeps that occurrence hidden and queues it for review.
+    """
+
+    if name_judge is None:
+        return
+    existing = {row.get("file") for row in not_complete_files}
+    for row in getattr(name_judge, "decisions", []):
+        stage = ""
+        message = ""
+        if row.get("judge_outcome") == "error":
+            stage = "judge"
+            message = str(row.get("error") or "judge error")
+        elif row.get("verifier_outcome") == "error":
+            stage = "verifier"
+            message = str(row.get("verifier_error") or "verifier error")
+        if (
+            stage
+            and is_model_transport_failure(message)
+            and row.get("file") not in existing
+        ):
+            not_complete_files.append(
+                {
+                    "file": str(row.get("file", "")),
+                    "status": "NOT_COMPLETE",
+                    "reason": f"{stage}_runtime_failure",
+                    "message": message,
+                }
+            )
+            existing.add(row.get("file"))
+
+    # A plug-in exception can happen before a verifier/judge Decision exists.
+    # pipeline.py records it with the owning file, so the rest of the batch can
+    # complete while that one file is withheld from output.
+    for failure in getattr(name_judge, "runtime_failures", []):
+        file_name = str(failure.get("file") or "")
+        if not file_name or file_name in existing:
+            continue
+        stage = str(failure.get("stage") or "model")
+        message = str(failure.get("message") or "model exception without decision")
+        not_complete_files.append(
+            {
+                "file": file_name,
+                "status": "NOT_COMPLETE",
+                "reason": f"{stage}_runtime_failure",
+                "message": message,
+            }
+        )
+        existing.add(file_name)
+
+
+def is_model_transport_failure(message: str) -> bool:
+    """Recognize failures where Ollama/model availability, not an answer, failed."""
+
+    normalized = message.casefold()
+    markers = (
+        "connection refused",
+        "connection reset",
+        "connection aborted",
+        "network is unreachable",
+        "name or service not known",
+        "temporary failure in name resolution",
+        "urlopen error",
+        "timed out",
+        "timeout",
+        "offline",
+        "ollama unreachable",
+        "model not found",
+        "http error",
+    )
+    return any(marker in normalized for marker in markers)
+
+
+def invalid_answer_counts_by_file(decisions: list[dict[str, object]]) -> dict[str, int]:
+    """Count malformed model answers without mistaking transport outages for them."""
+
+    counts: dict[str, int] = {}
+    for row in decisions:
+        messages = []
+        if row.get("judge_outcome") == "error":
+            messages.append(str(row.get("error") or ""))
+        if row.get("verifier_outcome") == "error":
+            messages.append(str(row.get("verifier_error") or ""))
+        if messages and not any(is_model_transport_failure(message) for message in messages):
+            file_name = str(row.get("file") or "")
+            if file_name:
+                counts[file_name] = counts.get(file_name, 0) + 1
+    return counts
+
+
+_PATH_TOKEN_RE = re.compile(r"[^\W\d_]{3,}", re.UNICODE)
+
+
+def _path_tokens(value: str) -> set[str]:
+    folded = unicodedata.normalize("NFKD", value.casefold())
+    folded = "".join(char for char in folded if not unicodedata.combining(char))
+    return {token for token in _PATH_TOKEN_RE.findall(folded)}
+
+
+def find_path_review_files(
+    input_path: Path,
+    watchlist_paths: list[Path],
+    findings: list[Finding],
+    include_default_names: bool = True,
+    skip_roots: list[Path] | None = None,
+) -> list[dict[str, str]]:
+    """Find source paths whose relative components expose a sensitive token."""
+
+    try:
+        watchlist = load_names(watchlist_paths, include_default=include_default_names)
+    except (OSError, ValueError):
+        watchlist = set()
+    sensitive: set[str] = set()
+    for value in [*watchlist, *(f.text for f in findings if f.entity_type == "NAME")]:
+        sensitive.update(_path_tokens(value))
+    if not sensitive:
+        return []
+
+    watchlist_files = {path.resolve() for path in watchlist_paths}
+    rows: list[dict[str, str]] = []
+    input_dir_is_sensitive = input_path.is_dir() and bool(
+        _path_tokens(input_path.name) & sensitive
+    )
+    for source in iter_all_files(input_path, skip_root=skip_roots):
+        if source.resolve() in watchlist_files:
+            continue
+        relative = relative_name(source, input_path)
+        if input_dir_is_sensitive or any(
+            _path_tokens(part) & sensitive for part in Path(relative).parts
+        ):
+            rows.append(
+                {
+                    "file": relative,
+                    "reason": "path_contains_sensitive_name",
+                }
+            )
+    return rows
+
+
+def write_audit_rows_csv(
+    path: Path,
+    rows: list[dict[str, str]],
+    *,
+    fieldnames: tuple[str, ...],
+    path_key: str,
+) -> None:
+    """Write a small local-only CSV for skipped or path-review files."""
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("w", newline="", encoding="utf-8") as handle:
+        writer = csv.DictWriter(handle, fieldnames=list(fieldnames))
+        writer.writeheader()
+        for row in rows:
+            writer.writerow({field: row.get(path_key if field == "path" else field, "") for field in fieldnames})
+
+
+def write_hidden_pairs_csv(path: Path, findings: list[Finding]) -> tuple[Path, int]:
+    """Write local audit samples for deterministic watchlist-pair removals."""
+
+    groups: dict[str, list[Finding]] = {}
+    for finding in findings:
+        if finding.source != "watchlist_pair":
+            continue
+        key = " ".join(finding.text.split()).casefold()
+        groups.setdefault(key, []).append(finding)
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("w", newline="", encoding="utf-8") as handle:
+        writer = csv.DictWriter(
+            handle,
+            fieldnames=("pair", "count", "sample_1", "sample_2"),
+        )
+        writer.writeheader()
+        for _, entries in sorted(groups.items(), key=lambda item: (-len(item[1]), item[0])):
+            samples = _unique_pair_samples(entries)
+            writer.writerow(
+                {
+                    "pair": entries[0].text,
+                    "count": len(entries),
+                    "sample_1": samples[0] if samples else "",
+                    "sample_2": samples[1] if len(samples) > 1 else "",
+                }
+            )
+    return path, len(groups)
+
+
+def _unique_pair_samples(entries: list[Finding]) -> list[str]:
+    """Keep at most two marked candidate lines in their first-seen order."""
+
+    samples: list[str] = []
+    for finding in entries:
+        context = finding.context
+        marker = context.find("[[")
+        if marker != -1:
+            start = context.rfind("\n", 0, marker) + 1
+            end = context.find("\n", marker)
+            context = context[start:] if end == -1 else context[start:end]
+        if context not in samples:
+            samples.append(context)
+        if len(samples) == 2:
+            break
+    return samples
+
+
+def _move_checked_files(
+    output_dir: Path,
+    needs_review_dir: Path,
+    files: set[str],
+    write_failures: list[dict[str, str]],
+) -> None:
+    """Promote checked files atomically to their final release or review tree."""
+
+    for relative in sorted(files):
+        source = output_dir / relative
+        if not source.exists():
+            continue
+        try:
+            target = needs_review_dir / relative
+            copy_file_atomically(source, target)
+            source.unlink()
+        except OSError as exc:
+            write_failures.append(
+                {
+                    "file": relative,
+                    "status": "NOT_COMPLETE",
+                    "reason": "review_move_error",
+                    "message": str(exc),
+                }
+            )
+
+
+def write_residual_report(
+    path: Path,
+    initial: object,
+    final: object,
+    repaired_files: int,
+    repaired_occurrences: int,
+) -> None:
+    """Persist the local audit for the one automatic residual repair pass."""
+
+    def rows(scan: object, attribute: str) -> list[dict[str, object]]:
+        return [finding.to_dict() for finding in getattr(scan, attribute)]
+
+    payload = {
+        "initial_replaceable": rows(initial, "replaceable"),
+        "initial_code_sensitive": rows(initial, "code_sensitive"),
+        "final_replaceable": rows(final, "replaceable"),
+        "final_code_sensitive": rows(final, "code_sensitive"),
+        "repaired_files": repaired_files,
+        "repaired_occurrences": repaired_occurrences,
+    }
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
+
+
+def write_out_manifest(
+    path: Path,
+    input_path: Path,
+    output_dir: Path,
+    path_review_files: list[dict[str, str]],
+    skipped_files: list[dict[str, str]],
+    not_complete_files: list[dict[str, str]],
+    review_required_files: set[str] | None = None,
+    skip_roots: list[Path] | None = None,
+) -> None:
+    """Record the disposition and source hash for every input file."""
+
+    path_review = {row["file"] for row in path_review_files}
+    skipped = {row["file"] for row in skipped_files}
+    incomplete = {row["file"] for row in not_complete_files}
+    review_required = review_required_files or set()
+    rows: list[dict[str, str]] = []
+    for source in iter_all_files(input_path, skip_root=skip_roots):
+        relative = relative_name(source, input_path)
+        try:
+            source_hash = hashlib.sha256(source.read_bytes()).hexdigest()
+        except OSError:
+            source_hash = ""
+        if relative in path_review:
+            status = "PATH_REVIEW"
+        elif relative in incomplete:
+            status = "NOT_COMPLETE"
+        elif relative in review_required:
+            status = "REVIEW_REQUIRED"
+        elif relative in skipped or not is_text_candidate(source):
+            status = "SKIPPED"
+        elif (output_dir / relative).exists():
+            status = "ANONYMIZED"
+        else:
+            status = "NOT_WRITTEN"
+        rows.append({"file": relative, "sha256": source_hash, "status": status})
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("w", newline="", encoding="utf-8") as handle:
+        writer = csv.DictWriter(handle, fieldnames=["file", "sha256", "status"])
+        writer.writeheader()
+        writer.writerows(rows)
 
 
 def default_output_dir(input_path: Path) -> Path:

@@ -4,11 +4,21 @@ from __future__ import annotations
 
 import csv
 import hashlib
+import os
 import shutil
+import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from .scanner import Finding, iter_all_files, is_text_candidate, read_text, relative_name
+from .scanner import Finding, iter_all_files, is_text_candidate, relative_name
+from .source_reader import (
+    SourceDecodingError,
+    UnsupportedSourceEncodingError,
+    UTF8_BOM,
+    DecodedSource,
+    read_source,
+    split_source_lines,
+)
 
 NON_LINKABLE_ENTITIES = {"NAME", "MATRICOLA", "SUSPECTED_MATRICOLA"}
 
@@ -191,16 +201,28 @@ def suggested_replacement(group: ValueGroup, index: int, salt: str) -> str:
 
 
 def load_mapping(path: Path | None) -> dict[tuple[str, str], str]:
+    """Load explicit replacements and reject blank NAME decisions.
+
+    A blank value for a NAME row is not an instruction to keep the source text:
+    it is a privacy error.  Other entity types retain the legacy behaviour for
+    now, because their replacement policy is outside the NAME-only Phase A1
+    change.
+    """
+
     if not path or not path.exists():
         return {}
     mapping: dict[tuple[str, str], str] = {}
     with path.open(newline="", encoding="utf-8-sig") as handle:
         reader = csv.DictReader(handle)
         for row in reader:
-            entity_type = (row.get("entity_type") or "").strip()
+            entity_type = (row.get("entity_type") or "").strip().upper()
             key = (row.get("key") or "").strip()
             original = (row.get("original") or "").strip()
             replacement = (row.get("replacement") or "").strip()
+            if entity_type == "NAME" and not replacement:
+                raise ValueError(
+                    f"blank NAME replacement in mapping file {path}"
+                )
             if not entity_type or not replacement:
                 continue
             if key:
@@ -248,7 +270,37 @@ def apply_replacements(
     output_dir: Path,
     findings: list[Finding],
     replacements: dict[tuple[str, str], str],
+    not_complete_files: list[dict[str, str]] | None = None,
+    skipped_files: list[dict[str, str]] | None = None,
+    blocked_files: set[str] | None = None,
+    written_files: list[str] | None = None,
+    line_counts: dict[str, int] | None = None,
+    skip_roots: list[Path] | None = None,
+    source_hashes: dict[str, str] | None = None,
 ) -> tuple[int, int]:
+    """Write safely encoded, byte-width-preserving replacements.
+
+    The caller must make an explicit replacement choice for every remaining
+    NAME finding.  This defensive check prevents a new UI or import path from
+    recreating the old silent-skip leak. Each text source is decoded again
+    through ``source_reader`` so the writer uses the same encoding, BOM, and
+    byte boundaries as the scanner. A per-file write failure is recorded as
+    ``NOT_COMPLETE`` and does not overwrite that file's output.
+    """
+
+    for finding in findings:
+        if finding.entity_type != "NAME":
+            continue
+        replacement = replacements.get(finding_key(finding))
+        if not replacement or not replacement.strip():
+            raise ValueError(
+                "every NAME finding requires a non-blank replacement: "
+                f"{finding.file}:{finding.line}:{finding.column}"
+            )
+
+    incomplete = not_complete_files if not_complete_files is not None else []
+    skipped = skipped_files if skipped_files is not None else []
+    blocked = blocked_files or set()
     output_dir.mkdir(parents=True, exist_ok=True)
     by_file: dict[str, list[Finding]] = {}
     for finding in findings:
@@ -257,33 +309,248 @@ def apply_replacements(
 
     changed_files = 0
     replacement_count = 0
-    for source in iter_all_files(input_path, skip_root=output_dir):
+    for source in iter_all_files(input_path, skip_root=[output_dir, *(skip_roots or [])]):
         rel = relative_name(source, input_path)
         target = output_dir / rel
-        target.parent.mkdir(parents=True, exist_ok=True)
-        if not is_text_candidate(source):
-            shutil.copy2(source, target)
+        if rel in blocked:
             continue
-        text = read_text(source)
-        file_findings = sorted(by_file.get(rel, []), key=lambda item: item.start, reverse=True)
-        if not file_findings:
-            write_output_text(target, text)
-            continue
-        changed = False
-        for finding in file_findings:
-            replacement = replacements[finding_key(finding)]
-            if not replacement:
+        try:
+            if not is_text_candidate(source):
+                # Non-text files are deliberately not copied.  The shareable
+                # output contains only files that passed the scanner's text
+                # reader; callers receive an audit row for every omission.
+                skipped.append(
+                    {
+                        "file": rel,
+                        "reason": "unsupported_file_type",
+                    }
+                )
                 continue
-            text = text[: finding.start] + replacement + text[finding.end :]
-            changed = True
-            replacement_count += 1
-        write_output_text(target, text)
-        if changed:
+
+            decoded_source = read_source(source)
+            if source_hashes is not None and decoded_source.sha256 != source_hashes.get(rel):
+                raise ReplacementWriteError("source_changed", "source changed after scanning; withhold")
+            file_findings = by_file.get(rel, [])
+            output_text = apply_file_replacements(
+                decoded_source,
+                file_findings,
+                replacements,
+            )
+            output_bytes = encode_output_text(decoded_source, output_text)
+            validate_output_layout(decoded_source, output_text, output_bytes)
+            write_output_bytes_atomically(source, target, output_bytes)
+            if line_counts is not None:
+                line_counts[rel] = lines_past_column_72(decoded_source.text, output_text)
+            if written_files is not None:
+                written_files.append(rel)
+        except (
+            SourceDecodingError,
+            UnsupportedSourceEncodingError,
+            ReplacementWriteError,
+            UnicodeEncodeError,
+            OSError,
+        ) as exc:
+            record_not_complete_file(incomplete, rel, exc)
+            continue
+
+        if file_findings:
             changed_files += 1
+            replacement_count += len(file_findings)
     return changed_files, replacement_count
 
 
-def write_output_text(path: Path, text: str) -> None:
-    """Write anonymized text without newline conversion on Python 3.9+."""
-    with path.open("w", encoding="utf-8", newline="") as handle:
-        handle.write(text)
+def repair_written_files(
+    output_dir: Path,
+    findings: list[Finding],
+    replacements: dict[tuple[str, str], str],
+    not_complete_files: list[dict[str, str]] | None = None,
+    line_counts: dict[str, int] | None = None,
+) -> tuple[int, int]:
+    """Apply one safe repair pass to files already written to ``output_dir``.
+
+    This is used only by the final residual scan. It reuses the normal decoded
+    source, encoding, byte-width validation, and atomic-write path instead of
+    treating a post-write repair as an unsafe text edit.
+    """
+
+    incomplete = not_complete_files if not_complete_files is not None else []
+    by_file: dict[str, list[Finding]] = {}
+    for finding in findings:
+        by_file.setdefault(finding.file, []).append(finding)
+    changed_files = 0
+    replacement_count = 0
+    for relative, file_findings in by_file.items():
+        target = output_dir / relative
+        try:
+            decoded_source = read_source(target)
+            output_text = apply_file_replacements(decoded_source, file_findings, replacements)
+            output_bytes = encode_output_text(decoded_source, output_text)
+            validate_output_layout(decoded_source, output_text, output_bytes)
+            write_output_bytes_atomically(target, target, output_bytes)
+            if line_counts is not None:
+                line_counts[relative] = line_counts.get(relative, 0) + lines_past_column_72(decoded_source.text, output_text)
+        except (
+            SourceDecodingError,
+            UnsupportedSourceEncodingError,
+            ReplacementWriteError,
+            UnicodeEncodeError,
+            OSError,
+        ) as exc:
+            record_not_complete_file(incomplete, relative, exc)
+            continue
+        changed_files += 1
+        replacement_count += len(file_findings)
+    return changed_files, replacement_count
+
+
+class ReplacementWriteError(ValueError):
+    """One source file could not be modified without breaking its layout."""
+
+    def __init__(self, reason: str, message: str) -> None:
+        super().__init__(message)
+        self.reason = reason
+
+
+def apply_file_replacements(
+    source: DecodedSource,
+    findings: list[Finding],
+    replacements: dict[tuple[str, str], str],
+) -> str:
+    """Apply one file's spans after validating their exact source boundaries."""
+
+    ordered = sorted(findings, key=lambda item: (item.start, item.end))
+    for previous, current in zip(ordered, ordered[1:]):
+        if previous.end > current.start:
+            raise ReplacementWriteError(
+                "overlapping_replacements",
+                "replacement spans overlap and cannot be applied safely",
+            )
+
+    output_text = source.text
+    for finding in reversed(ordered):
+        if not 0 <= finding.start <= finding.end <= len(source.text):
+            raise ReplacementWriteError(
+                "replacement_span_out_of_range",
+                f"replacement span is outside the source: {finding.file}:{finding.line}",
+            )
+        if source.text[finding.start : finding.end] != finding.text:
+            raise ReplacementWriteError(
+                "replacement_text_mismatch",
+                f"replacement text no longer matches the source: {finding.file}:{finding.line}",
+            )
+
+        replacement = replacements[finding_key(finding)]
+        if "\r" in replacement or "\n" in replacement:
+            raise ReplacementWriteError(
+                "replacement_contains_line_break",
+                f"replacement contains a line break: {finding.file}:{finding.line}",
+            )
+        output_text = output_text[:finding.start] + replacement + output_text[finding.end:]
+
+    return output_text
+
+
+def encode_output_text(source: DecodedSource, text: str) -> bytes:
+    """Encode edited text in the source encoding and restore its UTF-8 BOM."""
+
+    try:
+        encoded = text.encode(source.encoding, errors="strict")
+    except UnicodeEncodeError as exc:
+        raise ReplacementWriteError("replacement_not_encodable", "replacement cannot use the source encoding") from exc
+    return UTF8_BOM + encoded if source.has_bom else encoded
+
+
+def validate_output_layout(
+    source: DecodedSource,
+    output_text: str,
+    output_bytes: bytes,
+) -> None:
+    """Prove output kept source byte width and exact CRLF/LF/CR record shape."""
+
+    original_lines = split_source_lines(source.text, keepends=True)
+    output_lines = split_source_lines(output_text, keepends=True)
+    if len(output_lines) != len(original_lines):
+        raise ReplacementWriteError("line_count_changed", "edited source changed its record count")
+    endings = lambda lines: [line[len(line.rstrip("\r\n")):] for line in lines]
+    if endings(original_lines) != endings(output_lines):
+        raise ReplacementWriteError("line_endings_changed", "edited source changed its line endings")
+
+
+def write_output_bytes_atomically(source: Path, target: Path, data: bytes) -> None:
+    """Replace one output file only after its complete byte sequence is ready."""
+
+    temporary_path = _temporary_output_path(target)
+    try:
+        with temporary_path.open("wb") as handle:
+            handle.write(data)
+            handle.flush()
+            os.fsync(handle.fileno())
+        shutil.copystat(source, temporary_path)
+        os.replace(temporary_path, target)
+    except OSError:
+        _remove_temporary_file(temporary_path)
+        raise
+
+
+def copy_file_atomically(source: Path, target: Path) -> None:
+    """Copy non-text input without exposing a partially written target file."""
+
+    temporary_path = _temporary_output_path(target)
+    try:
+        shutil.copyfile(source, temporary_path)
+        shutil.copystat(source, temporary_path)
+        os.replace(temporary_path, target)
+    except OSError:
+        _remove_temporary_file(temporary_path)
+        raise
+
+
+def _temporary_output_path(target: Path) -> Path:
+    target.parent.mkdir(parents=True, exist_ok=True)
+    descriptor, temporary_name = tempfile.mkstemp(
+        prefix=f".{target.name}.",
+        suffix=".tmp",
+        dir=target.parent,
+    )
+    os.close(descriptor)
+    return Path(temporary_name)
+
+
+def _remove_temporary_file(path: Path) -> None:
+    try:
+        path.unlink()
+    except FileNotFoundError:
+        pass
+
+
+def record_not_complete_file(
+    not_complete_files: list[dict[str, str]],
+    file_name: str,
+    error: Exception,
+) -> None:
+    """Append the small audit record consumed by the current CLI bridge."""
+
+    reason = getattr(error, "reason", "write_error")
+    not_complete_files.append(
+        {
+            "file": file_name,
+            "status": "NOT_COMPLETE",
+            "reason": str(reason),
+            "message": str(error),
+        }
+    )
+
+
+def lines_past_column_72(original: str, output: str) -> int:
+    """Count records newly extended past column 72, without truncation."""
+    return sum(len(before) <= 72 < len(after)
+               for before, after in zip(split_source_lines(original), split_source_lines(output)))
+
+
+def replacement_spans(findings: list[Finding], replacements: dict[tuple[str, str], str]) -> dict[str, list[tuple[int, int, int]]]:
+    """Record source spans and replacement character lengths for residual offsets."""
+    spans: dict[str, list[tuple[int, int, int]]] = {}
+    for finding in findings:
+        if finding_key(finding) in replacements:
+            spans.setdefault(finding.file, []).append((finding.start, finding.end, len(replacements[finding_key(finding)])))
+    return {file: sorted(items) for file, items in spans.items()}
