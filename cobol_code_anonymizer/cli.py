@@ -21,10 +21,10 @@ from .llm import (
     OLLAMA_TIMEOUT,
     load_model_digests,
 )
-from .replacements import ValueGroup, apply_replacements, copy_file_atomically, group_findings, finding_key, load_mapping, suggested_replacement, replacement_spans, write_mapping_template
+from .replacements import ValueGroup, apply_replacements, copy_file_atomically, group_findings, group_key, entity_sort_order, finding_key, load_mapping, suggested_replacement, replacement_spans, write_mapping_template
 from .pipeline import scan_path, policy_row
 from .preflight import run_preflight, write_frequent_words
-from .review_queue import write_review_queue_csv
+from .review_queue import build_llm_name_review_rows, write_llm_name_review_csv
 from .review_decisions import import_review_answers, load_review_decisions, folded_word, source_line
 from .residual import scan_written_output
 from .policy import apply_name_policy, NAME_POLICY_TABLE
@@ -100,7 +100,7 @@ def main(argv: list[str] | None = None) -> int:
     path_review_files: list[dict[str, str]] = []
     identifier_review_decisions: list[dict[str, object]] = []
     resolved_review_files: list[str] = []
-    import_review_answers(report_dir / "review_queue.csv", report_dir / "review_decisions.csv")
+    import_review_answers(report_dir / "llm_name_review.csv", report_dir / "review_decisions.csv")
     clear_previous_reports(report_dir, [input_path, *extra_watchlists,
                                        *([args.approved_words.resolve()] if args.approved_words else []),
                                        *([args.map_file.resolve()] if args.map_file else [])])
@@ -135,7 +135,7 @@ def main(argv: list[str] | None = None) -> int:
         except (OSError, ValueError, KeyError) as exc:
             available = ", ".join(sorted(model_digests)) or "none available"
             message = f"cannot read requested model: {exc}; available models: {available}"
-            write_failure_manifest(report_dir, model_startup_failures(input_path, role, message))
+            write_failure_report(report_dir, model_startup_failures(input_path, role, message), input_path)
             print(f"NOT_COMPLETE: {message}")
             return 1
 
@@ -155,7 +155,7 @@ def main(argv: list[str] | None = None) -> int:
         if not extract_ok:
             report_dir.mkdir(parents=True, exist_ok=True)
             startup_failures = model_startup_failures(input_path, "extractor", extract_reason)
-            write_failure_manifest(report_dir, startup_failures)
+            write_failure_report(report_dir, startup_failures, input_path)
             print(f"Error: name extraction startup check failed ({extract_reason}).")
             return 1
         print(f"Name extraction enabled: {extract_model} at {extract_host}")
@@ -200,7 +200,7 @@ def main(argv: list[str] | None = None) -> int:
             # start, no source is released with a partial decision pipeline.
             report_dir.mkdir(parents=True, exist_ok=True)
             startup_failures = model_startup_failures(input_path, "judge", judge_reason)
-            status_path = write_failure_manifest(report_dir, startup_failures)
+            status_path = write_failure_report(report_dir, startup_failures, input_path)
             print(f"Error: name judge startup check failed ({judge_reason}).")
             print(f"File status report: {status_path}")
             return 1
@@ -232,7 +232,7 @@ def main(argv: list[str] | None = None) -> int:
         )
     except RuntimeError as exc:
         failures = model_startup_failures(input_path, "detector", str(exc))
-        write_failure_manifest(report_dir, failures)
+        write_failure_report(report_dir, failures, input_path)
         print(f"NOT_COMPLETE: {exc}")
         return 1
     # Only extraction failures prevent a complete detection pass.
@@ -255,16 +255,15 @@ def main(argv: list[str] | None = None) -> int:
     rows = [*identifier_review_decisions, *(name_judge.decisions if name_judge else []), *path_rows]
     report_dir.mkdir(parents=True, exist_ok=True)
     if args.names_only or args.scan_only or args.create_map:
-        write_decisions(report_dir / "decisions.csv", rows)
-        write_review_queue_csv(report_dir / "review_queue.csv", rows)
-        write_llm_findings(report_dir / "llm_finding.txt", rows, name_extractor, name_judge, name_verifier)
-        if args.create_map:
-            write_mapping_template(report_dir / args.create_map.name, groups, load_mapping(args.map_file), args.salt)
-        summary = f"Scan only: {len(findings)} findings. No files released.\nReports: {report_dir}\n"
-        (report_dir / "scan_summary.txt").write_text(summary, encoding="utf-8")
-        print(summary, end="")
-        if not_complete_files:
-            write_failure_manifest(report_dir, not_complete_files)
+        review_rows = build_llm_name_review_rows(rows, name_extractor)
+        write_llm_name_review_csv(report_dir / "llm_name_review.csv", review_rows)
+        write_llm_name_review_text(report_dir / "llm_finding.txt", args.mode, review_rows)
+        write_mapping_template(report_dir / (args.create_map.name if args.create_map else "replacement_map.csv"), groups, load_mapping(args.map_file), args.salt)
+        header = [f"Result: released 0, withheld 0, not complete {len({row['file'] for row in not_complete_files})}", "Sample: not prepared (scan only)"]
+        write_scan_summary_report(report_dir / "scan_summary.txt", args.mode, input_path, findings, diagnostics, header)
+        print("\n".join(header))
+        print(f"Mode: {args.mode}")
+        print_scan_summary(input_path, findings, groups)
         return 1 if not_complete_files else 0
 
     replacements = choose_replacements(groups, load_mapping(args.map_file), args.salt, args.auto) if groups else {}
@@ -338,52 +337,31 @@ def main(argv: list[str] | None = None) -> int:
         replacement = aliases.get((row["file"], row["line"], row.get("column", 0), row["text"]))
         if replacement is not None:
             row["replacement"] = replacement
-    manifest = write_out_manifest(report_dir / "out_manifest.csv", input_path, output_dir,
-                                  path_review_files, skipped_files, not_complete_files, review_files,
-                                  skip_roots=skip_roots, decisions=rows, line_counts=line_counts, file_times=file_times, file_names=file_names, applied_spans=replacement_spans(findings, replacements))
-    statuses = {row["file"]: row["status"] for row in manifest}
+    failures = {row["file"]: row.get("message") or row["reason"] for row in not_complete_files}
+    review_files -= set(failures)
+    released = passed_files - set(failures)
     for row in rows:
-        row["file_status"] = statuses.get(row["file"], "not_complete")
-    write_decisions(report_dir / "decisions.csv", rows)
-    required, optional = write_review_queue_csv(report_dir / "review_queue.csv", rows)
-    write_llm_findings(report_dir / "llm_finding.txt", rows, name_extractor, name_judge, name_verifier)
+        row["file_status"] = "not_complete" if row["file"] in failures else "withheld" if row["file"] in review_files else "released"
+    review_rows = build_llm_name_review_rows(rows, name_extractor)
+    write_llm_name_review_csv(report_dir / "llm_name_review.csv", review_rows)
+    write_llm_name_review_text(report_dir / "llm_finding.txt", args.mode, review_rows)
     write_mapping_template(report_dir / "replacement_map.csv", groups, replacements, args.salt)
-    totals = Counter(row["status"] for row in manifest)
-    verifier_state = f"on ({args.name_verifier_model or NAME_VERIFIER_MODEL})" if name_verifier is not None else "off"
-    calls = sum(getattr(model, "calls", 0) if model is not None else 0 for model in (name_judge, name_verifier))
-    calls += getattr(name_extractor, "chunk_calls", 0) if name_extractor else 0
-    attempts = sum(value for model in (name_extractor, name_judge, name_verifier)
-                   if isinstance(value := getattr(model, "http_attempts", 0), (int, float)))
-    hits = sum(getattr(model, "cache_hits", 0) if model is not None else 0 for model in (name_extractor, name_judge, name_verifier))
-    latencies = [getattr(model, "latency_s", 0) for model in (name_extractor, name_judge, name_verifier)]
-    model_seconds = sum(value for value in latencies if isinstance(value, (int, float)))
-    summary = (f"Released {totals['released']}   Withheld {totals['withheld']}   Not complete {totals['not_complete']}   Skipped {totals['skipped']}\n"
-               f"Required review: {required} items (~{required / 3:.1f} min)   Optional corrections: {optional} items\n"
-               f"Verifier: {verifier_state}\nRuntime {time.perf_counter() - started:.1f} s   Model calls {calls}   Cache hits {hits}   HTTP attempts (incl. startup/retries) {attempts}\n"
-               f"Model request time (includes retries and startup): {model_seconds:.1f} s\n"
-               f"Lines newly past column 72: {sum(line_counts.values())}\n"
-               f"Applied spans: released {sum(row['hidden'] for row in manifest if row['status'] == 'released')}, withheld {sum(row['hidden'] for row in manifest if row['status'] == 'withheld')}. Unwritten files have zero applied spans.\n"
-               f"Queue answers: show = not a name; hide = name. Optional corrections do not block upload.\nSHARE ONLY: {output_dir}\nNever share: {report_dir}, .lst/.lis listings\n"
-               f"Review: {report_dir / 'review_queue.csv'}   Model report: {report_dir / 'llm_finding.txt'}\n")
-    summary += "Model failures: " + ", ".join(f"{role} {getattr(model, 'errors', 0) if model else 0}" for role, model in (("extractor", name_extractor), ("judge", name_judge), ("verifier", name_verifier))) + "\n"
-    for message in diagnostics:
-        summary += f"Warning: {message}\n"
-    terminal_summary = summary
-    if args.sample_unchanged:
-        samples = residual.samples if not write_failures else ()
-        sample_line = (f"Human sample: {len(samples)} of {residual.sample_population} released lines (all kinds); "
-                       f"seed {sample_seed}; manual check pending.\n") if not write_failures else "Human sample not prepared: release write failed; rerun.\n"
-        terminal_summary += sample_line
-        summary += "\n" + sample_line
-        summary += "Do not upload until the sample has been checked. Any name found: fix and check a new sample.\n"
-        summary += "".join(f"{file_names.get(row['file'], row['file'])}:{row['line']}  {row['text']}\n"
-                           for row in sorted(samples, key=lambda row: (row['file'], row['line'])))
-    else:
-        summary += "Human sample not prepared; use --sample-unchanged 300 for the first batch or 40 for later batches.\n"
-        terminal_summary = summary
-    (report_dir / "scan_summary.txt").write_text(summary, encoding="utf-8")
-    print(terminal_summary, end="")
-    return 1 if totals["withheld"] or totals["not_complete"] else 0
+    header = [f"Result: released {len(released)}, withheld {len(review_files)}, not complete {len(failures)}"]
+    for file in sorted(review_files):
+        reasons = {str(row["policy_reading"]) for row in rows if row["file"] == file and row["policy_outcome"] == "review_required"}
+        header.append(f"Withheld: {file} — {'; '.join(sorted(reasons))}")
+    header += [f"Not complete: {file} — {reason}" for file, reason in sorted(failures.items())]
+    samples = residual.samples if not write_failures else ()
+    if samples:
+        (report_dir / "sample_check.txt").write_text("Check each line for a readable person name. Any name found: do not upload; fix and take a new sample.\n" + "".join(f"{row['file'] if row.get('kind') == 'withheld copy' else file_names.get(row['file'], row['file'])}:{row['line']}  [{row.get('kind', 'released')}] {row['text']}\n" for row in samples), encoding="utf-8")
+    header.append(f"Sample: {len(samples)} lines in sample_check.txt" + (" (withheld copy)" if samples[0].get("kind") == "withheld copy" else "") if samples else "Sample: not prepared (no released files)" if not released else "Sample: not prepared (use --sample-unchanged)")
+    if review_files:
+        header.append("needs_review/ contains complete withheld copies; review the REVIEW rows in llm_name_review.csv.")
+    write_scan_summary_report(report_dir / "scan_summary.txt", args.mode, input_path, findings, diagnostics, header)
+    print("\n".join(header))
+    print(f"Mode: {args.mode}")
+    print_scan_summary(input_path, findings, groups)
+    return 1 if review_files or failures else 0
 
 
 def clear_previous_reports(report_dir: Path, inputs: list[Path]) -> None:
@@ -396,7 +374,7 @@ def clear_previous_reports(report_dir: Path, inputs: list[Path]) -> None:
         "llm_name_review.csv", "names_findings.csv", "names_findings.json",
         "not_complete_files.json", "out_manifest.csv", "path_review.csv",
         "preflight.txt", "frequent_words.csv", "replacement_map.csv", "residual_findings.json",
-        "review_queue.csv", "sample_check.csv", "scan_summary.txt", "skipped_files.csv",
+        "review_queue.csv", "llm_name_review.csv", "sample_check.csv", "sample_check.txt", "changes.txt", "scan_summary.txt", "skipped_files.csv",
         "verifier_summary.json", "decisions.csv",
     )
     protected = [path.resolve() for path in inputs]
@@ -412,12 +390,12 @@ def clear_previous_reports(report_dir: Path, inputs: list[Path]) -> None:
 
 
 
-def write_failure_manifest(report_dir: Path, failures: list[dict[str, str]]) -> Path:
-    report_dir.mkdir(parents=True, exist_ok=True)
-    path = report_dir / "out_manifest.csv"
-    rows = [{"file": row["file"], "status": "not_complete", "reason": row.get("message") or row["reason"],
-             "hidden": 0, "shown": 0, "review_required": 0, "past_col_72": 0} for row in failures]
-    write_audit_rows_csv(path, rows, fieldnames=("file", "status", "reason", "hidden", "shown", "review_required", "past_col_72"), path_key="file")
+def write_failure_report(report_dir, failures, input_path):
+    path = report_dir / "scan_summary.txt"
+    header = [f"Result: released 0, withheld 0, not complete {len({row['file'] for row in failures})}"]
+    header += [f"Not complete: {row['file']} — {row.get('message') or row['reason']}" for row in failures]
+    header += ["Sample: not prepared (no checked files)"]
+    write_scan_summary_report(path, "not complete", input_path, [], [], header)
     return path
 
 
@@ -713,23 +691,6 @@ def rename_path(file: str, aliases: dict[str, str]) -> str:
     return IDENTIFIER_PART_RE.sub(lambda match: aliases.get(fold_watchlist_value(match.group()), match.group()), file)
 
 
-def write_audit_rows_csv(
-    path: Path,
-    rows: list[dict[str, str]],
-    *,
-    fieldnames: tuple[str, ...],
-    path_key: str,
-) -> None:
-    """Write a small local-only CSV for skipped or path-review files."""
-
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("w", newline="", encoding="utf-8") as handle:
-        writer = csv.DictWriter(handle, fieldnames=list(fieldnames))
-        writer.writeheader()
-        for row in rows:
-            writer.writerow({field: row.get(path_key if field == "path" else field, "") for field in fieldnames})
-
-
 def _move_checked_files(
     output_dir: Path,
     needs_review_dir: Path,
@@ -758,57 +719,6 @@ def _move_checked_files(
             )
 
 
-def write_out_manifest(
-    path: Path, input_path: Path, output_dir: Path, path_review_files: list[dict[str, str]],
-    skipped_files: list[dict[str, str]], not_complete_files: list[dict[str, str]],
-    review_required_files: set[str] | None = None, skip_roots: list[Path] | None = None,
-    decisions: list[dict[str, object]] | None = None, line_counts: dict[str, int] | None = None,
-    file_times: dict[str, float] | None = None,
-    file_names: dict[str, str] | None = None,
-    applied_spans: dict[str, list[tuple[int, int, int]]] | None = None,
-) -> list[dict[str, object]]:
-    """Record every input file's final release status and counts."""
-    paths = {row["file"] for row in path_review_files}
-    skipped = {row["file"]: row["reason"] for row in skipped_files}
-    failed = {row["file"]: row.get("message") or row["reason"] for row in not_complete_files}
-    reviews = review_required_files or set()
-    by_file = {}
-    for row in decisions or []:
-        by_file.setdefault(str(row["file"]), []).append(row)
-    rows = []
-    for source in iter_all_files(input_path, skip_root=skip_roots):
-        file = relative_name(source, input_path)
-        entries = by_file.get(file, [])
-        required = {(folded_word(str(row["text"])[start:end]), source_line(str(row.get("context", "")), str(row["text"])))
-                    for row in entries if row["policy_outcome"] == "review_required"
-                    for start, end in name_word_spans(str(row["text"]))}
-        if file in failed:
-            status, reason = "not_complete", failed[file]
-        elif file in paths:
-            status, reason = "withheld", "name in file or folder name"
-        elif file in reviews:
-            status, reason = "withheld", "; ".join(sorted({str(row["policy_reading"]) for row in entries if row["policy_outcome"] == "review_required"}))
-        elif file in skipped or not is_text_candidate(source):
-            status, reason = "skipped", skipped.get(file, "compiler listing" if source.suffix.lower() in {".lst", ".lis"} else "unsupported file type")
-        elif (output_dir / (file_names or {}).get(file, file)).is_file():
-            status, reason = "released", ""
-        else:
-            status, reason = "not_complete", "file not written"
-        rows.append({"file": file, "output_file": (file_names or {}).get(file, file) if status == "released" else "",
-                     "status": status, "reason": reason,
-                     "hidden": len((applied_spans or {}).get(file, [])) if status in {"released", "withheld"} else 0,
-                     "shown": sum(row["policy_outcome"] == "leave_unchanged" for row in entries),
-                     "review_required": len(required), "past_col_72": (line_counts or {}).get(file, 0) if status in {"released", "withheld"} else 0})
-    with path.open("w", newline="", encoding="utf-8") as handle:
-        writer = csv.DictWriter(handle, fieldnames=("file", "output_file", "status", "reason", "hidden", "shown", "review_required", "past_col_72"))
-        writer.writeheader()
-        writer.writerows(rows)
-    for index, row in enumerate(rows, start=1):
-        if row["status"] != "skipped":
-            print(f"[{index}/{len(rows)}] {row['file']}  {row['status']}  hidden {row['hidden']}, shown {row['shown']}  {row['reason']}  {(file_times or {}).get(str(row['file']), 0) / 60:.1f} min scan")
-    return rows
-
-
 def default_output_dir(input_path: Path) -> Path:
     if input_path.is_file():
         return input_path.parent / "anonymized"
@@ -819,58 +729,125 @@ def print_progress(message: str) -> None:
     print(message, flush=True)
 
 
-def write_decisions(path: Path, rows: list[dict[str, object]]) -> None:
-    with path.open("w", newline="", encoding="utf-8") as handle:
-        writer = csv.DictWriter(handle, fieldnames=("file", "line", "col", "word", "detector", "judge", "verifier", "action", "reason", "context", "replacement", "review_answer", "key"))
-        writer.writeheader()
-        for row in sorted(rows, key=lambda row: (str(row["file"]), int(row["line"]), int(row.get("column", 0)))):
-            writer.writerow({"file": row["file"], "line": row["line"], "col": row.get("column", 0),
-                             "word": row["text"], "detector": row.get("source", ""),
-                             "judge": row.get("judge_outcome", "not_called"), "verifier": row.get("verifier_outcome", "not_called"),
-                             "action": {"anonymize_whole": "hide", "leave_unchanged": "show", "review_required": "review"}[row["policy_outcome"]],
-                             "reason": row["policy_reading"], "context": row.get("review_line") or row.get("context", ""),
-                             "replacement": row.get("replacement", ""), "review_answer": row.get("review_answer") or "",
-                             "key": row.get("review_key", "")})
-
-
-def write_llm_findings(path: Path, rows: list[dict[str, object]], extractor, judge, verifier) -> None:
-    lines = ["LLM findings", "Detected candidates only. Undetected names, wrong human answers and unlisted CODE/path parts can still be readable. Check the random sample before upload.", f"Verifier: {'on' if verifier is not None else 'off'} ({getattr(verifier, 'model', NAME_VERIFIER_MODEL)})"]
-    for role, model, field in (("Extractor", extractor, "chunk_calls"), ("Judge", judge, "calls"), ("Verifier", verifier, "calls")):
-        if model is None:
-            lines.append(f"{role}: off")
-            continue
-        lines.append(f"{role} ({getattr(model, 'model', '')}): {getattr(model, field, 0)} calls, "
-                     f"{getattr(model, 'cache_hits', 0)} cache hits, {getattr(model, 'canary_calls', 0)} startup calls, {getattr(model, 'errors', 0)} failures")
-        outcome_field = "judge_outcome" if role == "Judge" else "verifier_outcome"
-        if role != "Extractor":
-            lines.append(f"  Audit outcomes (include reused answers): {dict(Counter(row.get(outcome_field) for row in rows if row.get(outcome_field) not in {None, 'not_called'}))}")
-    if extractor is not None:
-        lines.append(f"Extractor: {getattr(extractor, 'anchored', 0)} anchored, {getattr(extractor, 'unlocatable', 0)} unmatched answers (affected files not complete)")
-    only_extractor = {(row["file"], row["start"], row["end"]) for row in getattr(extractor, "comparisons", []) if row.get("status") == "extractor_only"}
-    sections = (
-        ("[1] SHOWN approved words (check for leaks)", lambda row: row.get("approved") and row["policy_outcome"] == "leave_unchanged"),
-        ("[2] SHOWN non-watchlist candidates (judge alone)", lambda row: not row.get("watchlist") and row.get("judge_outcome") == "propose_unchanged" and row["policy_outcome"] == "leave_unchanged"),
-        ("[3] Names found ONLY by the extractor", lambda row: any(file == row["file"] and start < int(row.get("end", 0)) and int(row.get("start", 0)) < end for file, start, end in only_extractor)),
-        ("[4] Approved words HIDDEN because the models disagreed", lambda row: row.get("approved") and row["policy_outcome"] == "anonymize_whole" and row.get("judge_outcome") == "propose_unchanged"),
+def group_findings_for_summary(findings: list[Finding]) -> list[ValueGroup]:
+    """Group repeated values for display without changing replacement behavior."""
+    groups: dict[tuple[str, str], ValueGroup] = {}
+    for finding in findings:
+        key = group_key(finding.entity_type, finding.text)
+        if key not in groups:
+            groups[key] = ValueGroup(
+                entity_type=finding.entity_type,
+                original=" ".join(finding.text.split()),
+                key=key,
+            )
+        groups[key].findings.append(finding)
+    return sorted(
+        groups.values(),
+        key=lambda group: (entity_sort_order(group.entity_type), group.original.upper()),
     )
-    for title, selected in sections:
-        groups = {}
-        for row in rows:
-            if row.get("entity_type", "NAME") == "NAME" and selected(row):
-                groups.setdefault(folded_word(str(row["text"])), []).append(row)
-        lines.extend(["", title])
-        for word, entries in sorted(groups.items()):
-            row = entries[0]
-            count = len({source_line(str(entry.get("context", "")), str(entry["text"])) for entry in entries})
-            lines.append(f"  {word}  {count} lines  {row['file']}:{row['line']}  {row.get('context', '')!r}  "
-                         f"judge: {row.get('judge_outcome', 'not_called')}, verifier: {row.get('verifier_outcome', 'not_called')}  "
-                         f"{row['policy_reading']}")
-    lines.extend(["", "[5] SHOWN by reviewer or CODE/path approval (also check for leaks)"])
-    for row in rows:
-        if row["policy_outcome"] == "leave_unchanged" and (row.get("review_answer") or row.get("code_sensitive_identifier")):
-            lines.append(f"  {row['file']}:{row['line']} {row['text']!r}  {row['policy_reading']}  {row.get('context', '')!r}")
-    lines.extend(["", f"Audited decisions by file status: {dict(Counter(row.get('file_status', 'scan_only') for row in rows))}"])
+
+def print_scan_summary(input_path: Path, findings: list[Finding], groups: list[ValueGroup]) -> None:
+    print(f"Input: {input_path}")
+    print(f"Findings: {len(findings)}")
+    display_groups = group_findings_for_summary(findings)
+    if not display_groups:
+        return
+
+    current_entity = ""
+    for index, group in enumerate(display_groups, start=1):
+        if group.entity_type != current_entity:
+            current_entity = group.entity_type
+            print(f"\n[{current_entity}]")
+        print(f"  {index:>3}. {group.original}  hits={group.count}  locations={group.locations}")
+
+def write_scan_summary_report(
+    path: Path,
+    mode: str,
+    input_path: Path,
+    findings: list[Finding],
+    diagnostics: list[str],
+    header=(),
+) -> None:
+    """Write the terminal-style grouped findings summary as a text file."""
+    lines = [*header, f"Mode: {mode}"]
+    lines.extend(f"Warning: {message}" for message in diagnostics)
+    lines.extend([f"Input: {input_path}", f"Findings: {len(findings)}"])
+
+    current_entity = ""
+    for index, group in enumerate(group_findings_for_summary(findings), start=1):
+        if group.entity_type != current_entity:
+            current_entity = group.entity_type
+            lines.extend(["", f"[{current_entity}]"])
+        lines.append(
+            f"  {index:>3}. {group.original}  hits={group.count}  "
+            f"locations={group.locations}"
+        )
+
+    path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+def write_llm_name_review_text(
+    path: Path,
+    mode: str,
+    rows: list[dict[str, object]],
+) -> None:
+    """Write grouped LLM name decisions in the terminal summary style."""
+    lines = ["To change a decision, write hide/show in the answer column of llm_name_review.csv and rerun."]
+    grouped: dict[tuple[str, str, str, str], dict[str, object]] = {}
+    for row in rows:
+        status = llm_text_status(row)
+        name = " ".join(str(row.get("name", "")).split()) or "<empty output>"
+        reason = llm_text_reason(row)
+        key = (status, name.casefold(), reason)
+        group = grouped.setdefault(
+            key,
+            {
+                "status": status,
+                "name": name,
+                "reason": reason,
+                "locations": [],
+                "count": 0,
+            },
+        )
+        group["count"] = int(group["count"]) + 1
+        file = str(row.get("file", ""))
+        line = str(row.get("line", ""))
+        location = f"{file}:{line}" if line else file
+        if location and location not in group["locations"]:
+            group["locations"].append(location)
+
+    status_order = {"REVIEW REQUIRED": 0, "ACCEPTED AS NAME - hidden": 1, "REJECTED - left as is": 2}
+    ordered = sorted(
+        grouped.values(),
+        key=lambda group: (
+            status_order.get(str(group["status"]), 99),
+            str(group["name"]).casefold(),
+        ),
+    )
+    current_status = ""
+    section_index = 0
+    for group in ordered:
+        status = str(group["status"])
+        if status != current_status:
+            current_status = status
+            section_index = 0
+            lines.extend(["", f"[{status}]"])
+        section_index += 1
+        locations = ", ".join(str(item) for item in group["locations"]) or "unknown"
+        lines.append(
+            f"  {section_index:>3}. {group['name']}  hits={group['count']}  "
+            f"locations={locations}  reason={group['reason']}"
+        )
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+def llm_text_status(row):
+    return {"review (required)": "REVIEW REQUIRED", "hide (optional review)": "ACCEPTED AS NAME - hidden", "hide": "ACCEPTED AS NAME - hidden", "show": "REJECTED - left as is"}[row["final_action"]]
+
+
+def llm_text_reason(row):
+    return row["reason"]
 
 
 def choose_replacements(

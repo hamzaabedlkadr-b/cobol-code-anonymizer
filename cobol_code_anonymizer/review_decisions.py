@@ -92,7 +92,7 @@ def import_review_answers(queue: Path, stored: Path) -> None:
     with queue.open(newline="", encoding="utf-8") as handle:
         for row in csv.DictReader(handle):
             answer = row.get("answer", "").strip().casefold()
-            word, line = row.get("word", "").strip(), source_line(row.get("line", ""), row.get("word", ""))
+            word, line = row.get("name", row.get("word", "")).strip(), source_line(row.get("context", row.get("line", "")), row.get("name", row.get("word", "")))
             if answer in {"show", "hide"} and word and line:
                 answers[folded_word(word), row.get("key") or line] = {"word": word, "line": line, "answer": answer, "date": date.today().isoformat(), "key": row.get("key", "")}
                 changed = True

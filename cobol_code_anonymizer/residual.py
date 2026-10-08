@@ -73,6 +73,7 @@ def scan_written_output(
     code_sensitive: list[Finding] = []
     errors: list[dict[str, str]] = []
     samples, population = [], 0
+    withheld_samples, withheld_population = [], 0
     randomizer = random.Random(sample_seed)
     for path in iter_all_files(output_dir):
         if not is_text_candidate(path):
@@ -153,17 +154,25 @@ def scan_written_output(
                 code_sensitive.append(finding)
             else:
                 replaceable.append(finding)
-        if sample_count and len(errors) == error_before and len(replaceable) + len(code_sensitive) == unresolved_before:
+        if sample_count and len(errors) == error_before:
+            withheld = len(replaceable) + len(code_sensitive) > unresolved_before
+            target = withheld_samples if withheld else samples
             for line, text in enumerate(split_source_lines(source.text), 1):
-                population += 1
-                row = {"file": relative, "line": line, "text": text}
-                if len(samples) < sample_count:
-                    samples.append(row)
+                if withheld:
+                    withheld_population += 1
+                    count = withheld_population
                 else:
-                    slot = randomizer.randrange(population)
+                    population += 1
+                    count = population
+                row = {"file": relative, "line": line, "text": text, "kind": "withheld copy" if withheld else "released"}
+                if len(target) < sample_count:
+                    target.append(row)
+                else:
+                    slot = randomizer.randrange(count)
                     if slot < sample_count:
-                        samples[slot] = row
-    return ResidualScan(tuple(replaceable), tuple(code_sensitive), tuple(errors), tuple(samples), population)
+                        target[slot] = row
+    return ResidualScan(tuple(replaceable), tuple(code_sensitive), tuple(errors),
+                        tuple(samples or withheld_samples), population or withheld_population)
 
 
 def _is_placeholder(value: str) -> bool:
