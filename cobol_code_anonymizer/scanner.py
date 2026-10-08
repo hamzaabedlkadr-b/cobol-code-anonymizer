@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import re
 import unicodedata
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 from functools import lru_cache
 from pathlib import Path
 from typing import Callable
@@ -19,7 +19,8 @@ from .candidates import (
 )
 from .overlaps import resolve_overlaps
 from .source_reader import read_source
-from .logical_text import continued_literal_texts
+from .logical_text import continued_literal_texts, extraction_texts, LogicalText, LogicalPiece
+from .text_matching import line_column, source_findings, fold_watchlist_value, prepare_watchlist, IDENTIFIER_PART_RE, WATCHLIST_TOKEN_RE
 
 
 TEXT_EXTENSIONS = {
@@ -109,176 +110,10 @@ PHONE_LABEL_RE = re.compile(
     r"(?P<value>\+?\d[\d .()/-]{6,20}\d)",
     re.IGNORECASE,
 )
-UNKNOWN_NAME_TOKEN_RE = re.compile(
-    r"(?<!\w)"
-    r"(?P<value>[A-ZÀ-ÖØ-Þ][A-ZÀ-ÖØ-Þ'’]{2,})"
-    r"(?!\w)"
-)
-UNKNOWN_NAME_WORD_RE = re.compile(
-    r"(?<![\w.-])"
-    r"(?P<value>[^\W\d_]\.|[^\W\d_](?:(?:['’]{1,2}|-)?[^\W\d_])+)"
-    r"(?![\w-])",
-    re.UNICODE,
-)
 QUOTED_LITERAL_RE = re.compile(
     r"'(?:''|[^'\r\n]){2,160}'|\"[^\"\r\n]{2,160}\""
 )
 
-NAME_STOPWORDS = {
-    "AUTHOR",
-    "CELL",
-    "CELLULARE",
-    "CODICE",
-    "COGNOME",
-    "COMMENTO",
-    "EMAIL",
-    "FISCALE",
-    "IBAN",
-    "MAIL",
-    "MATRICOLA",
-    "NOME",
-    "NOMINATIVO",
-    "OPERATORE",
-    "REFERENTE",
-    "RESPONSABILE",
-    "TEL",
-    "TELEFONO",
-    "TEST",
-}
-UNKNOWN_NAME_STOPWORDS = NAME_STOPWORDS | {
-    "ABEND",
-    "ACCT",
-    "AGGIORNAMENTO",
-    "AGGIORNARE",
-    "AGGIORNATA",
-    "AGGIUNTA",
-    "ALLA",
-    "ANAGRAFICA",
-    "ANNOTAZIONE",
-    "APPOGGIO",
-    "AREA",
-    "ASSEGNI",
-    "ASSIGN",
-    "ATTENZIONE",
-    "BATCH",
-    "BREVE",
-    "CALL",
-    "CATALOGO",
-    "CATEGORIE",
-    "CATEGORIEPARTICOLARI",
-    "CEDOLINO",
-    "CESSATI",
-    "CESSAZIONE",
-    "CODICE",
-    "COMMENT",
-    "COMPOSTO",
-    "COMP",
-    "CONGUAGLIO",
-    "CONTABILI",
-    "CONTROLLO",
-    "COPY",
-    "COPYBOOK",
-    "CREATE",
-    "CREATED",
-    "DATA",
-    "DATI",
-    "DEBITO",
-    "DELLA",
-    "DELLE",
-    "DIREZIONE",
-    "DISPLAY",
-    "DIVISION",
-    "DOPO",
-    "ELENCO",
-    "ELIMINAZIONE",
-    "ERRORE",
-    "EXEC",
-    "FILE",
-    "GESTIONE",
-    "IMPOSTA",
-    "INPUT",
-    "LABEL",
-    "LAVORAZIONE",
-    "MAGGIORE",
-    "MATCH",
-    "MODIFICA",
-    "MODIFICHE",
-    "NON",
-    "NOMINATIVI",
-    "NOTE",
-    "OUTPUT",
-    "PARM",
-    "PIC",
-    "PROGRAM",
-    "PROGRAMMA",
-    "PROCEDURE",
-    "PUNTAMENTO",
-    "RECORD",
-    "RIATTIVATI",
-    "RIGA",
-    "RIGHE",
-    "RIVERSIBILITA",
-    "RIVERSIB",
-    "SCRITTURA",
-    "SENZA",
-    "SPACES",
-    "STAMPA",
-    "STOP",
-    "TABELLA",
-    "VALUE",
-    "VALIDATO",
-    "VALIDATA",
-    "VALIDAZIONE",
-    "VERIFICARE",
-    "VERIFICA",
-    "VITALIZI",
-    "WORKING",
-    "WURTH",
-    "ZERO",
-    "ZEROS",
-}
-UNKNOWN_NAME_CONTEXT_WORDS = {
-    "AGGIORNATO",
-    "ANALISTA",
-    "AUTORE",
-    "AUTHOR",
-    "AVVISARE",
-    "CHIAMARE",
-    "CONTATTARE",
-    "CREATO",
-    "EMAIL",
-    "REFERENTE",
-    "RESPONSABILE",
-    "MAIL",
-    "OPERATORE",
-    "SEGNALARE",
-    "SIG",
-    "SIG.",
-    "SIGRA",
-    "SIG.RA",
-    "UTENTE",
-}
-UNKNOWN_NAME_PERSON_MARKERS = {
-    "ANALISTA",
-    "AUTHOR",
-    "AUTORE",
-    "CLIENTE",
-    "CONTATTARE",
-    "DIPENDENTE",
-    "FIRMATARIO",
-    "INCARICATO",
-    "NOMINATIVO",
-    "OPERATORE",
-    "REFERENTE",
-    "RESPONSABILE",
-    "UTENTE",
-}
-UNKNOWN_NAME_PERSON_MARKER_RE = re.compile(
-    r"\b(?:" + "|".join(
-        sorted((re.escape(marker) for marker in UNKNOWN_NAME_PERSON_MARKERS), key=len, reverse=True)
-    ) + r")\b",
-    re.IGNORECASE,
-)
 ROSTER_FIELD_STOPWORDS = {
     "ID",
     "EMPLOYEE",
@@ -332,8 +167,7 @@ PAIR_TOKEN_RE = re.compile(
     re.UNICODE,
 )
 PAIR_GAP_RE = re.compile(r"(?:[ \t]+|,[ \t]*)")
-CASE_SHAPE_WORD_RE = re.compile(r"\b[A-ZÀ-ÖØ-Þ][a-zà-öø-ÿ]{2,}\b")
-FOLDED_WATCHLIST_TOKEN_RE = re.compile(r"(?<![\w-])[A-Za-zÀ-ÖØ-öø-ÿ0-9]+(?![\w-])")
+FOLDED_WATCHLIST_TOKEN_RE = WATCHLIST_TOKEN_RE
 WATCHLIST_FOLD_TRANSLATION = str.maketrans({"0": "O", "1": "I", "5": "S"})
 
 @dataclass(frozen=True)
@@ -348,17 +182,22 @@ class Finding:
     confidence: float
     context: str
     source: str = ""
-    # Joined literal data is private routing metadata for model validation.
-    # Reports and replacements continue to use this physical source span.
     logical_context: str = ""
     logical_candidate: str = ""
+    logical: LogicalText | None = None
+    logical_start: int = 0
+    logical_end: int = 0
+    review_line: str = ""
+    review_key: str = ""
 
     def to_dict(self) -> dict[str, object]:
-        data = asdict(self)
+        data = {name: getattr(self, name) for name in self.__dataclass_fields__ if name != "logical"}
         data.pop("start")
         data.pop("end")
         data.pop("logical_context")
         data.pop("logical_candidate")
+        for key in ("logical_start", "logical_end", "review_line", "review_key"):
+            data.pop(key)
         return data
 
     def to_candidate_records(
@@ -472,11 +311,7 @@ def relative_name(path: Path, input_path: Path) -> str:
     return str(path.relative_to(input_path))
 
 
-def line_column(text: str, offset: int) -> tuple[int, int]:
-    line = text.count("\n", 0, offset) + 1
-    last_newline = text.rfind("\n", 0, offset)
-    column = offset + 1 if last_newline == -1 else offset - last_newline
-    return line, column
+
 
 
 def context_for(text: str, start: int, end: int, radius: int = 75) -> str:
@@ -495,7 +330,7 @@ def trim_span(text: str, start: int, end: int) -> tuple[int, int]:
 
 def load_names(
     extra_watchlists: list[Path] | None = None,
-    include_default: bool = True,
+    include_default: bool = False,
 ) -> list[str]:
     names_path = Path(__file__).parent / "data" / "italian_names.txt"
     paths = ([names_path] if include_default else []) + list(extra_watchlists or [])
@@ -648,7 +483,7 @@ def name_scan_ranges(text: str, scope: str) -> list[tuple[int, int]]:
     return merge_ranges(ranges)
 
 
-def unknown_name_scan_ranges(text: str, scope: str) -> list[tuple[int, int]]:
+def free_text_scan_ranges(text: str, scope: str) -> list[tuple[int, int]]:
     if scope == "all":
         return [(0, len(text))]
 
@@ -668,42 +503,28 @@ def unknown_name_scan_ranges(text: str, scope: str) -> list[tuple[int, int]]:
 def find_watchlist_pair_spans(
     text: str,
     watchlist_values: tuple[str, ...] | list[str],
+    *, words: set[str] | None = None, all_text: bool = False,
 ) -> list[tuple[int, int]]:
     """Return deterministic multi-word watchlist spans in comments/literals.
 
-    A pair is either two or more adjacent single-word watchlist entries, or a
-    dotted initial immediately next to one entry. The narrow separators keep
+    A pair has adjacent single-word watchlist entries of at least three letters.
+    The narrow separators keep
     this an auditable structural rule: spaces/tabs or one comma only. Pairs
     never cross a comment/literal boundary or a physical line.
     """
 
-    watchlist_words = {
-        _normalise_pair_token(value)
-        for value in watchlist_values
-        if len(ROSTER_TOKEN_RE.findall(value)) == 1
-        and _normalise_pair_token(value)
-    }
+    watchlist_words = words if words is not None else prepare_watchlist(watchlist_values)[1]
     if not watchlist_words:
         return []
 
     spans: list[tuple[int, int]] = []
     # Pairs deliberately remain restricted to comments/literals even if the
     # caller asked other detectors to scan all code text.
-    for range_start, range_end in _watchlist_pair_scan_ranges(text):
+    for range_start, range_end in ([(0, len(text))] if all_text else _watchlist_pair_scan_ranges(text)):
         tokens = list(PAIR_TOKEN_RE.finditer(text, range_start, range_end))
         index = 0
         while index < len(tokens):
             current = tokens[index]
-            if _is_dotted_initial(current):
-                if _pair_neighbours(current, tokens, index + 1) and _is_watchlist_pair_word(
-                    tokens[index + 1], watchlist_words
-                ):
-                    spans.append((current.start(), tokens[index + 1].end()))
-                    index += 2
-                    continue
-                index += 1
-                continue
-
             if not _is_watchlist_pair_word(current, watchlist_words):
                 index += 1
                 continue
@@ -720,12 +541,6 @@ def find_watchlist_pair_spans(
                 index = end_index + 1
                 continue
 
-            if _pair_neighbours(current, tokens, index + 1) and _is_dotted_initial(
-                tokens[index + 1]
-            ):
-                spans.append((current.start(), tokens[index + 1].end()))
-                index += 2
-                continue
             index += 1
     return spans
 
@@ -747,11 +562,12 @@ def scan_watchlist_pairs(
     text: str,
     rel_file: str,
     watchlist_values: tuple[str, ...] | list[str],
+    *, words: set[str] | None = None, all_text: bool = False,
 ) -> list[Finding]:
     """Emit high-confidence pair findings before regular NAME detectors."""
 
     findings: list[Finding] = []
-    for start, end in find_watchlist_pair_spans(text, watchlist_values):
+    for start, end in find_watchlist_pair_spans(text, watchlist_values, words=words, all_text=all_text):
         line, column = line_column(text, start)
         findings.append(
             Finding(
@@ -770,67 +586,8 @@ def scan_watchlist_pairs(
     return findings
 
 
-def scan_case_shape_names(text: str, rel_file: str) -> list[Finding]:
-    """Emit title-case words embedded in an otherwise uppercase free-text region.
-
-    This is only a candidate source: ordinary code and ordinary mixed-case
-    prose do not qualify, and the judge/verifier retain all keep decisions.
-    """
-
-    findings: list[Finding] = []
-    for range_start, range_end in _watchlist_pair_scan_ranges(text):
-        segment = text[range_start:range_end]
-        words = list(CASE_SHAPE_WORD_RE.finditer(segment))
-        if not words or not _surrounding_letters_are_mostly_uppercase(segment, words):
-            continue
-        index = 0
-        while index < len(words):
-            group_end = index
-            while (
-                group_end + 1 < len(words)
-                and segment[words[group_end].end() : words[group_end + 1].start()].isspace()
-            ):
-                group_end += 1
-            start = range_start + words[index].start()
-            end = range_start + words[group_end].end()
-            line, column = line_column(text, start)
-            findings.append(
-                Finding(
-                    file=rel_file,
-                    entity_type="NAME",
-                    text=text[start:end],
-                    start=start,
-                    end=end,
-                    line=line,
-                    column=column,
-                    confidence=0.65,
-                    context=context_for(text, start, end),
-                    source="case_shape",
-                )
-            )
-            index = group_end + 1
-    return findings
 
 
-def _surrounding_letters_are_mostly_uppercase(
-    segment: str,
-    mixed_words: list[re.Match[str]],
-) -> bool:
-    """Measure uppercase context after removing possible person-name words."""
-
-    name_positions = {
-        position
-        for match in mixed_words
-        for position in range(match.start(), match.end())
-    }
-    surrounding = [
-        character
-        for position, character in enumerate(segment)
-        if position not in name_positions and character.isalpha()
-    ]
-    return bool(surrounding) and (
-        sum(character.isupper() for character in surrounding) / len(surrounding) >= 0.70
-    )
 
 
 def _pair_neighbours(
@@ -847,12 +604,8 @@ def _pair_neighbours(
     )
 
 
-def _is_dotted_initial(match: re.Match[str]) -> bool:
-    return match.group().endswith(".") and len(match.group()[:-1]) == 1
-
-
 def _is_watchlist_pair_word(match: re.Match[str], words: set[str]) -> bool:
-    return not match.group().endswith(".") and _normalise_pair_token(match.group()) in words
+    return not match.group().endswith(".") and fold_watchlist_value(match.group()) in words
 
 
 def _normalise_pair_token(value: str) -> str:
@@ -919,24 +672,6 @@ def is_inside_email_or_url(text: str, start: int, end: int) -> bool:
     return "@" in token or "://" in token
 
 
-def trim_name_stopwords(text: str, start: int, end: int) -> tuple[int, int]:
-    while True:
-        value = text[start:end].strip()
-        if not value:
-            return start, start
-        words = value.split()
-        first = words[0].strip(":,.;").upper()
-        last = words[-1].strip(":,.;").upper()
-        changed = False
-        if first in NAME_STOPWORDS:
-            start = text.find(words[0], start, end) + len(words[0])
-            changed = True
-        if last in NAME_STOPWORDS and start < end:
-            end = text.rfind(words[-1], start, end)
-            changed = True
-        start, end = trim_span(text, start, end)
-        if not changed:
-            return start, end
 
 
 def build_presidio_analyzer(model_name: str, diagnostics: list[str]) -> object | None:
@@ -944,12 +679,7 @@ def build_presidio_analyzer(model_name: str, diagnostics: list[str]) -> object |
         from presidio_analyzer import AnalyzerEngine
         from presidio_analyzer.nlp_engine import NlpEngineProvider
     except ImportError as exc:
-        diagnostics.append(
-            "Microsoft Presidio/spaCy are not installed; falling back to the bundled watchlist. "
-            "Install with: python -m pip install -e . && python -m spacy download it_core_news_sm"
-        )
-        diagnostics.append(f"Import error: {exc}")
-        return None
+        raise RuntimeError("spaCy/Presidio is unavailable; install it or use --no-presidio") from exc
 
     try:
         nlp_config = {
@@ -959,12 +689,7 @@ def build_presidio_analyzer(model_name: str, diagnostics: list[str]) -> object |
         nlp_engine = NlpEngineProvider(nlp_configuration=nlp_config).create_engine()
         return AnalyzerEngine(nlp_engine=nlp_engine, supported_languages=["it"])
     except Exception as exc:
-        diagnostics.append(
-            f"Could not start Presidio with spaCy model {model_name!r}; "
-            "falling back to the bundled watchlist."
-        )
-        diagnostics.append(f"Presidio error: {exc}")
-        return None
+        raise RuntimeError(f"spaCy model {model_name!r} could not start; fix it or use --no-presidio: {exc}") from exc
 
 
 def scan_path(
@@ -972,17 +697,13 @@ def scan_path(
     entities: set[str] | None = None,
     extra_watchlists: list[Path] | None = None,
     employee_rosters: list[Path] | None = None,
-    include_default_names: bool = True,
-    detect_unknown_names: bool = False,
-    case_shape_enabled: bool = True,
-    unknown_name_min_length: int = 4,
+    include_default_names: bool = False,
     name_scope: str = "context",
     skip_root: Path | list[Path] | None = None,
     use_presidio: bool = True,
     presidio_model: str = "it_core_news_sm",
     diagnostics: list[str] | None = None,
     not_complete_files: list[dict[str, str]] | None = None,
-    review_items: list[object] | None = None,
     identifier_review_decisions: list[dict[str, object]] | None = None,
     resolved_review_files: list[str] | None = None,
     review_answers: object | None = None,
@@ -1005,16 +726,12 @@ def scan_path(
         extra_watchlists=extra_watchlists,
         employee_rosters=employee_rosters,
         include_default_names=include_default_names,
-        detect_unknown_names=detect_unknown_names,
-        case_shape_enabled=case_shape_enabled,
-        unknown_name_min_length=unknown_name_min_length,
         name_scope=name_scope,
         skip_root=skip_root,
         use_presidio=use_presidio,
         presidio_model=presidio_model,
         diagnostics=diagnostics,
         not_complete_files=not_complete_files,
-        review_items=review_items,
         identifier_review_decisions=identifier_review_decisions,
         resolved_review_files=resolved_review_files,
         review_answers=review_answers,
@@ -1033,14 +750,11 @@ def scan_file(
     name_regex: re.Pattern[str] | None,
     roster_name_regex: re.Pattern[str] | None,
     roster_matricula_values: set[str],
-    detect_unknown_names: bool,
-    unknown_name_min_length: int,
     name_scope: str,
     presidio_analyzer: object | None = None,
     name_extractor: object | None = None,
     name_judge: object | None = None,
     name_verifier: object | None = None,
-    protected_regex: re.Pattern[str] | None = None,
 ) -> list[Finding]:
     """Compatibility wrapper; production orchestration lives in pipeline.py."""
 
@@ -1053,8 +767,6 @@ def scan_file(
         name_regex,
         roster_name_regex,
         roster_matricula_values,
-        detect_unknown_names,
-        unknown_name_min_length,
         name_scope,
         presidio_analyzer=presidio_analyzer,
         name_extractor=name_extractor,
@@ -1064,14 +776,9 @@ def scan_file(
 
     from .pipeline import review_name_findings
 
-    protected_ranges = (
-        [match.span() for match in protected_regex.finditer(source.text)]
-        if protected_regex is not None
-        else []
-    )
     return review_name_findings(
         findings,
-        protected_ranges,
+
         file_sha256=source.sha256,
         name_judge=name_judge,
         name_verifier=name_verifier,
@@ -1085,14 +792,12 @@ def scan_text(
     name_regex: re.Pattern[str] | None,
     roster_name_regex: re.Pattern[str] | None,
     roster_matricula_values: set[str],
-    detect_unknown_names: bool,
-    unknown_name_min_length: int,
     name_scope: str,
     presidio_analyzer: object | None = None,
     name_extractor: object | None = None,
     watchlist_pair_values: tuple[str, ...] | list[str] = (),
     layout: SourceLayout | None = None,
-    case_shape_enabled: bool = True,
+    pair_words: set[str] | None = None,
 ) -> list[Finding]:
     """Run detectors on already-decoded text without policy or model calls."""
 
@@ -1113,6 +818,26 @@ def scan_text(
         findings.extend(regex_findings(text, rel_file, "PHONE", PHONE_LABEL_RE, 0.78, group="value"))
     if "NAME" in entities:
         name_findings: list[Finding] = []
+        if layout is not None:
+            entries = watchlist_pair_values if isinstance(watchlist_pair_values, dict) else prepare_watchlist(watchlist_pair_values)[0]
+            pair_words = pair_words if pair_words is not None else prepare_watchlist(watchlist_pair_values)[1]
+            for logical in extraction_texts(layout):
+                local = []
+                local.extend(scan_watchlist_pairs(logical.text, rel_file, (), words=pair_words, all_text=True))
+                if name_regex:
+                    local.extend(scan_watchlist_names(logical.text, rel_file, name_regex, "all"))
+                local.extend(scan_folded_watchlist_names(logical.text, rel_file, entries, "all"))
+                if roster_name_regex:
+                    local.extend(scan_watchlist_names(logical.text, rel_file, roster_name_regex, "all", source="employee_roster"))
+                if presidio_analyzer:
+                    local.extend(scan_presidio_names(logical.text, rel_file, presidio_analyzer, "all"))
+                for hit in resolve_overlaps(local).selected:
+                    name_findings.extend(source_findings(hit, logical, layout))
+            name_findings.extend(scan_identifier_watchlist_names(text, rel_file, entries, layout=layout))
+            if name_extractor is not None:
+                name_findings.extend(name_extractor.extract(text, rel_file, name_scope, deterministic=list(name_findings), layout=layout))
+            findings.extend(resolve_overlaps(name_findings).selected)
+            return findings
         # Add pairs before other NAME detectors. If another detector returns
         # the same span, overlap cleanup retains this stronger deterministic
         # source and the pipeline can bypass the judge.
@@ -1139,7 +864,6 @@ def scan_text(
                     rel_file,
                     presidio_analyzer,
                     name_scope,
-                    layout=layout,
                 )
             )
         if name_regex:
@@ -1170,15 +894,6 @@ def scan_text(
                     confidence=0.92,
                 )
             )
-        if detect_unknown_names:
-            name_findings.extend(
-                scan_unknown_name_candidates(
-                    text,
-                    rel_file,
-                    name_scope,
-                    min_length=unknown_name_min_length,
-                )
-            )
         if name_extractor is not None:
             name_findings.extend(
                 name_extractor.extract(
@@ -1189,16 +904,6 @@ def scan_text(
                     layout=layout,
                 )
             )
-        if case_shape_enabled:
-            # This small, visible pattern is a default detector.  It only
-            # fills gaps: deterministic and extractor candidates retain
-            # their stronger provenance when spans overlap.
-            for candidate in scan_case_shape_names(text, rel_file):
-                if not any(
-                    candidate.start < existing.end and existing.start < candidate.end
-                    for existing in name_findings
-                ):
-                    name_findings.append(candidate)
         # Give the pipeline one stable detector span set. Policy may remove a
         # selected span but it never creates a replacement detector finding.
         name_findings = list(resolve_overlaps(name_findings).selected)
@@ -1283,413 +988,56 @@ def is_probable_matricola_value(value: str) -> bool:
     return bool(MATRICOLA_VALUE_RE.fullmatch(cleaned))
 
 
-def scan_presidio_names(
-    text: str,
-    rel_file: str,
-    analyzer: object,
-    scope: str,
-    *,
-    layout: SourceLayout | None = None,
-) -> list[Finding]:
-    findings: list[Finding] = []
-    ranges = name_scan_ranges(text, scope)
+def scan_presidio_names(text: str, rel_file: str, analyzer: object, scope: str) -> list[Finding]:
+    """Keep bounded PERSON spans; policy decides their meaning."""
     try:
         results = analyzer.analyze(text=text, language="it", entities=["PERSON"])
-    except Exception:
-        return []
-    for result in results:
-        start, end = trim_span(text, result.start, result.end)
-        start, end = trim_name_stopwords(text, start, end)
-        if (
-            start >= end
-            or not offset_in_ranges(start, end, ranges)
-            or is_inside_email_or_url(text, start, end)
-        ):
-            continue
-        value = text[start:end]
-        if is_probable_name_false_positive(value):
-            continue
-        line, column = line_column(text, start)
-        findings.append(
-            Finding(
-                file=rel_file,
-                entity_type="NAME",
-                text=value,
-                start=start,
-                end=end,
-                line=line,
-                column=column,
-                confidence=float(result.score),
-                context=context_for(text, start, end),
-                source="presidio_spacy",
-            )
-        )
-    # A continued fixed-format literal is not meaningful text until its
-    # physical pieces are joined.  The ordinary full-source pass above keeps
-    # existing behavior; this supplemental pass gives spaCy the logical value
-    # and maps a hit back to separately replaceable source fragments.
-    if layout is not None:
-        for logical in continued_literal_texts(layout):
-            try:
-                logical_results = analyzer.analyze(
-                    text=logical.text,
-                    language="it",
-                    entities=["PERSON"],
-                )
-            except Exception:
-                continue
-            for result in logical_results:
-                spans = logical.source_spans(result.start, result.end)
-                for start, end in spans:
-                    value = text[start:end]
-                    if not value or is_probable_name_false_positive(value):
-                        continue
-                    line, column = line_column(text, start)
-                    findings.append(
-                        Finding(
-                            file=rel_file,
-                            entity_type="NAME",
-                            text=value,
-                            start=start,
-                            end=end,
-                            line=line,
-                            column=column,
-                            confidence=float(result.score),
-                            context=context_for(text, start, end),
-                            source="presidio_spacy",
-                        )
-                    )
-    return findings
-
-
-def is_probable_name_false_positive(value: str) -> bool:
-    normalized = " ".join(value.replace("\r", " ").replace("\n", " ").split())
-    if not normalized:
-        return True
-    if any(char.isdigit() for char in normalized):
-        return True
-    if any(char in normalized for char in ("=", "'", '"')):
-        return True
-    if "-" in normalized:
-        return True
-    words = normalized.upper().split()
-    if len(words) == 1 and normalized.isupper():
-        return True
-    technical_words = {
-        "CALL",
-        "COMP",
-        "DISPLAY",
-        "DIVISION",
-        "ELSE",
-        "END",
-        "IF",
-        "MOVE",
-        "PERFORM",
-        "PIC",
-        "SECTION",
-        "THEN",
-        "TO",
-        "USING",
-        "VALUE",
-        "WHEN",
-        *NAME_STOPWORDS,
-    }
-    return any(word in technical_words for word in words)
-
-
-def scan_unknown_name_candidates(
-    text: str,
-    rel_file: str,
-    scope: str,
-    min_length: int,
-) -> list[Finding]:
-    findings: list[Finding] = []
-    for start_range, end_range in unknown_name_scan_ranges(text, scope):
-        segment = text[start_range:end_range]
-        for match in UNKNOWN_NAME_TOKEN_RE.finditer(segment):
-            start = start_range + match.start("value")
-            end = start_range + match.end("value")
-            start, end = trim_unknown_name_span(text, start, end)
-            if start >= end:
-                continue
-            if is_inside_email_or_url(text, start, end):
-                continue
-            value = text[start:end]
-            normalized = normalize_unknown_name_token(value)
-            if not looks_like_unknown_name(normalized, text, start, end, min_length):
-                continue
-            line, column = line_column(text, start)
-            findings.append(
-                Finding(
-                    file=rel_file,
-                    entity_type="NAME",
-                    text=value,
-                    start=start,
-                    end=end,
-                    line=line,
-                    column=column,
-                    confidence=unknown_name_confidence(normalized, text, start, end),
-                    context=context_for(text, start, end),
-                    source="unknown_name_heuristic",
-                )
-            )
-        findings.extend(
-            scan_unknown_name_shapes(
-                text,
-                rel_file,
-                start_range,
-                end_range,
-                min_length,
-            )
-        )
-    return list(resolve_overlaps(findings).selected)
-
-
-def scan_unknown_name_shapes(
-    text: str,
-    rel_file: str,
-    start_range: int,
-    end_range: int,
-    min_length: int,
-) -> list[Finding]:
-    """Generate mixed-case candidates without interpreting COBOL identifiers.
-
-    Strong shapes become complete spans. Ordinary adjacent title-case words are
-    emitted separately so the judge can reject either word independently.
-    """
-    segment = text[start_range:end_range]
-    words = [
-        (
-            start_range + match.start("value"),
-            start_range + match.end("value"),
-            match.group("value"),
-        )
-        for match in UNKNOWN_NAME_WORD_RE.finditer(segment)
-    ]
-    spans: set[tuple[int, int]] = set()
-
-    # A person label is strong enough to retain the complete nearby name.
-    for marker in UNKNOWN_NAME_PERSON_MARKER_RE.finditer(segment):
-        marker_end = start_range + marker.end()
-        following = next((index for index, word in enumerate(words) if word[0] >= marker_end), None)
-        if following is None:
-            continue
-        first_start = words[following][0]
-        if not is_name_separator(text[marker_end:first_start], allow_label_punctuation=True):
-            continue
-        selected = []
-        for index in range(following, min(following + 4, len(words))):
-            start, end, value = words[index]
-            if selected and not is_name_separator(text[selected[-1][1]:start]):
-                break
-            if not is_name_component(value):
-                break
-            selected.append((start, end, value))
-        if selected and any(not is_surname_particle(word[2]) for word in selected):
-            spans.add((selected[0][0], selected[-1][1]))
-
-    for index, (start, end, value) in enumerate(words):
-        if is_name_initial(value):
-            initial_span = initial_name_span(text, words, index)
-            if initial_span is not None:
-                spans.add(initial_span)
-
-        if has_distinctive_name_separator(value) and is_title_name_component(value):
-            phrase_start, phrase_end = start, end
-            expanded_left = False
-            if index > 0:
-                previous = words[index - 1]
-                if (
-                    is_title_name_component(previous[2])
-                    and not is_surname_particle(previous[2])
-                    and is_name_separator(text[previous[1]:start])
-                ):
-                    phrase_start = previous[0]
-                    expanded_left = True
-            if not expanded_left and index + 1 < len(words):
-                following = words[index + 1]
-                if (
-                    is_title_name_component(following[2])
-                    and not is_surname_particle(following[2])
-                    and is_name_separator(text[end:following[0]])
-                ):
-                    phrase_end = following[1]
-            spans.add((phrase_start, phrase_end))
-
-        if index + 1 < len(words):
-            following = words[index + 1]
-            if not is_name_separator(text[end:following[0]]):
-                continue
-            if (
-                is_title_name_component(value)
-                and is_title_name_component(following[2])
-                and not is_surname_particle(value)
-                and not is_surname_particle(following[2])
-            ):
-                spans.add((start, end))
-                spans.add((following[0], following[1]))
-
-        if index + 2 < len(words):
-            middle = words[index + 1]
-            following = words[index + 2]
-            if (
-                is_title_name_component(value)
-                and is_surname_particle(middle[2])
-                and is_title_name_component(following[2])
-                and is_name_separator(text[end:middle[0]])
-                and is_name_separator(text[middle[1]:following[0]])
-            ):
-                spans.add((start, following[1]))
-
+    except Exception as exc:
+        raise RuntimeError(f"spaCy detection failed: {exc}") from exc
     findings = []
-    for start, end in sorted(spans):
-        value = text[start:end]
-        if (
-            name_letter_count(value) < min_length
-            or is_inside_email_or_url(text, start, end)
-        ):
+    ranges = name_scan_ranges(text, scope)
+    for result in results:
+        if not 0 <= result.start < result.end <= len(text):
+            raise RuntimeError("spaCy returned invalid source bounds")
+        start, end = trim_span(text, result.start, result.end)
+        if start >= end or not offset_in_ranges(start, end, ranges):
             continue
         line, column = line_column(text, start)
-        findings.append(
-            Finding(
-                file=rel_file,
-                entity_type="NAME",
-                text=value,
-                start=start,
-                end=end,
-                line=line,
-                column=column,
-                confidence=0.72,
-                context=context_for(text, start, end),
-                source="unknown_name_shape",
-            )
-        )
+        findings.append(Finding(rel_file, "NAME", text[start:end], start, end, line, column,
+                                float(result.score), context_for(text, start, end), "presidio_spacy"))
     return findings
 
 
-def is_name_separator(value: str, allow_label_punctuation: bool = False) -> bool:
-    allowed = r"\s*" if not allow_label_punctuation else r"[\s:;,=-]*"
-    return bool(re.fullmatch(allowed, value))
 
 
-def name_letter_count(value: str) -> int:
-    return sum(char.isalpha() for char in value)
 
 
-def normalized_name_word(value: str) -> str:
-    return value.rstrip(".").replace("’", "'").replace("''", "'")
 
 
-def is_name_initial(value: str) -> bool:
-    return len(value) == 2 and value[0].isupper() and value[0].isalpha() and value[1] == "."
 
 
-def is_surname_particle(value: str) -> bool:
-    return normalized_name_word(value).upper() in SURNAME_PARTICLES
 
 
-def is_title_name_component(value: str) -> bool:
-    if is_name_initial(value):
-        return True
-    normalized = normalized_name_word(value)
-    upper = normalized.upper()
-    if (
-        upper in UNKNOWN_NAME_STOPWORDS
-        or upper in UNKNOWN_NAME_CONTEXT_WORDS
-        or upper in UNKNOWN_NAME_PERSON_MARKERS
-    ):
-        return False
-    parts = re.split(r"['-]", normalized)
-    return bool(parts) and all(part and part[0].isupper() for part in parts) and any(
-        char.islower() for char in normalized
-    )
 
 
-def is_name_component(value: str) -> bool:
-    return is_title_name_component(value) or is_surname_particle(value)
 
 
-def has_distinctive_name_separator(value: str) -> bool:
-    normalized = normalized_name_word(value)
-    return "'" in normalized or "-" in normalized
 
 
-def initial_name_span(
-    text: str,
-    words: list[tuple[int, int, str]],
-    index: int,
-) -> tuple[int, int] | None:
-    if index + 1 >= len(words):
-        return None
-    initial = words[index]
-    following = words[index + 1]
-    if not is_name_separator(text[initial[1]:following[0]]):
-        return None
-    if is_surname_particle(following[2]) and index + 2 < len(words):
-        surname = words[index + 2]
-        if (
-            is_title_name_component(surname[2])
-            and is_name_separator(text[following[1]:surname[0]])
-        ):
-            return initial[0], surname[1]
-        return None
-    if is_title_name_component(following[2]):
-        return initial[0], following[1]
-    return None
 
 
-def normalize_unknown_name_token(value: str) -> str:
-    return value.replace("’", "'")
 
 
-def trim_unknown_name_span(text: str, start: int, end: int) -> tuple[int, int]:
-    boundary_chars = " \t\r\n.,;:()[]{}\"'"
-    while start < end and text[start] in boundary_chars:
-        start += 1
-    while end > start and text[end - 1] in boundary_chars:
-        end -= 1
-    return start, end
 
 
-def looks_like_unknown_name(
-    value: str,
-    text: str,
-    start: int,
-    end: int,
-    min_length: int,
-) -> bool:
-    upper = value.upper()
-    if len(value.replace("'", "")) < min_length:
-        return False
-    if any(char.isdigit() for char in value):
-        return False
-    if (
-        upper in UNKNOWN_NAME_STOPWORDS
-        or upper in UNKNOWN_NAME_CONTEXT_WORDS
-        or upper in UNKNOWN_NAME_PERSON_MARKERS
-    ):
-        return False
-    if upper.startswith(("PDR", "PDH", "PDC", "SQL", "DFH", "CICS")):
-        return False
-    if "-" in value or "_" in value:
-        return False
-    if not has_unknown_name_context(value, text, start, end):
-        return False
-    return True
 
 
-def has_unknown_name_context(value: str, text: str, start: int, end: int) -> bool:
-    line_start = text.rfind("\n", 0, start) + 1
-    line_end = text.find("\n", end)
-    if line_end == -1:
-        line_end = len(text)
-    line = text[line_start:line_end]
-    upper_line = line.upper()
-    if "'" in value:
-        return True
-    if any(word in upper_line for word in UNKNOWN_NAME_CONTEXT_WORDS):
-        return True
-    return is_comment_line(line) and looks_like_isolated_surname(value)
+
+
+
+
+
+
 
 
 def is_comment_line(line: str) -> bool:
@@ -1697,30 +1045,8 @@ def is_comment_line(line: str) -> bool:
     return stripped.startswith("*") or stripped.startswith("//*") or (len(line) > 6 and line[6] == "*")
 
 
-def looks_like_isolated_surname(value: str) -> bool:
-    letters = value.replace("'", "")
-    if not (4 <= len(letters) <= 18):
-        return False
-    upper = letters.upper()
-    if upper in UNKNOWN_NAME_STOPWORDS:
-        return False
-    common_non_name_endings = ("MENTO", "ZIONE", "GRAFICA", "ABILE", "ATORI", "AZIONE")
-    if upper.endswith(common_non_name_endings):
-        return False
-    return True
 
 
-def unknown_name_confidence(value: str, text: str, start: int, end: int) -> float:
-    line_start = text.rfind("\n", 0, start) + 1
-    line_end = text.find("\n", end)
-    if line_end == -1:
-        line_end = len(text)
-    upper_line = text[line_start:line_end].upper()
-    if "'" in value:
-        return 0.72
-    if any(word in upper_line for word in UNKNOWN_NAME_CONTEXT_WORDS):
-        return 0.68
-    return 0.58
 
 
 def scan_watchlist_names(
@@ -1760,11 +1086,6 @@ def scan_watchlist_names(
     return list(resolve_overlaps(raw).selected)
 
 
-def fold_watchlist_value(value: str) -> str:
-    """Fold only the documented visual substitutions for watchlist matching."""
-
-    decomposed = unicodedata.normalize("NFKD", value).upper().translate(WATCHLIST_FOLD_TRANSLATION)
-    return "".join(character for character in decomposed if not unicodedata.combining(character))
 
 
 def scan_folded_watchlist_names(
@@ -1781,11 +1102,7 @@ def scan_folded_watchlist_names(
     such as ``SALA1`` and ``C0NTI01`` are not converted into name candidates.
     """
 
-    entries = {
-        fold_watchlist_value(value): value
-        for value in watchlist_values
-        if len(ROSTER_TOKEN_RE.findall(value)) == 1 and len(value) >= 3
-    }
+    entries = watchlist_values if isinstance(watchlist_values, dict) else prepare_watchlist(watchlist_values)[0]
     if not entries:
         return []
 
@@ -1799,20 +1116,6 @@ def scan_folded_watchlist_names(
             if folded in entries:
                 findings.append(_folded_watchlist_finding(text, rel_file, start, start + len(raw)))
                 continue
-            pair = _glued_watchlist_pair(folded, entries)
-            if pair is None:
-                continue
-            first, second = pair
-            split = len(entries[first])
-            # All allowed visual substitutions are one source character. If
-            # an accent decomposition made the simple split unsafe, leave the
-            # token for later review rather than guess a replacement boundary.
-            if split <= 0 or split >= len(raw):
-                continue
-            findings.append(_folded_watchlist_finding(text, rel_file, start, start + split))
-            findings.append(
-                _folded_watchlist_finding(text, rel_file, start + split, start + len(raw))
-            )
     return list(resolve_overlaps(findings).selected)
 
 
@@ -1846,6 +1149,7 @@ def scan_identifier_watchlist_names(
     text: str,
     rel_file: str,
     watchlist_values: tuple[str, ...] | list[str],
+    *, layout: SourceLayout | None = None,
 ) -> list[Finding]:
     """Return watchlist components in COBOL identifiers for manual review.
 
@@ -1856,14 +1160,21 @@ def scan_identifier_watchlist_names(
     adds a replacement span.
     """
 
-    entries = {
-        fold_watchlist_value(value)
-        for value in watchlist_values
-        if len(ROSTER_TOKEN_RE.findall(value)) == 1
-    }
+    entries = watchlist_values if isinstance(watchlist_values, dict) else prepare_watchlist(watchlist_values)[0]
     if not entries:
         return []
 
+    if layout is not None:
+        findings = []
+        for region in layout.regions_of_kind("code"):
+            value = text[region.decoded_start:region.decoded_end]
+            logical = LogicalText(value, (LogicalPiece(0, len(value), region.decoded_start, region.decoded_end),), "code")
+            for match in IDENTIFIER_PART_RE.finditer(value):
+                if fold_watchlist_value(match.group()) in entries:
+                    template = Finding(rel_file, "NAME", match.group(), match.start(), match.end(), region.line,
+                                       match.start() + 1, .7, "", "watchlist")
+                    findings.extend(source_findings(template, logical, layout))
+        return findings
     findings: list[Finding] = []
     offset = 0
     for physical_line in text.splitlines(keepends=True):
@@ -1920,18 +1231,6 @@ def _identifier_code_offset(line: str) -> int:
     return 0
 
 
-def _glued_watchlist_pair(
-    folded: str,
-    entries: dict[str, str],
-) -> tuple[str, str] | None:
-    match = None
-    for split in range(1, len(folded)):
-        first, second = folded[:split], folded[split:]
-        if first in entries and second in entries:
-            if match is not None:
-                return None
-            match = (first, second)
-    return match
 
 
 def _folded_watchlist_finding(text: str, rel_file: str, start: int, end: int) -> Finding:

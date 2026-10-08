@@ -1,27 +1,15 @@
-"""Production orchestration for the privacy-first anonymization pipeline.
-
-This module is the one place that connects source reading, deterministic
-detectors, overlap cleanup, evidence, the LLM judge, the independent verifier,
-and policy.  Individual stages remain deliberately narrow: ``scanner.py``
-finds candidates, ``judge.py`` returns a semantic proposal, ``verifier.py``
-returns an independent answer, and ``policy.py`` alone decides whether a NAME
-candidate may be removed from the anonymization findings.
-
-The current public result remains ``list[Finding]`` so this refactor does not
-change reports or replacements.  Later phases can replace that compatibility
-shape with immutable records without moving the orchestration again.
-"""
+"""Read, detect, decide, and collect source findings."""
 
 from __future__ import annotations
 
 from dataclasses import replace
 from pathlib import Path
+import time
 from typing import Callable
 
 from . import scanner
-from .cobol_layout import classify_source
-from .decisions import Decision, ReviewItem
-from .evidence import assess_name_evidence
+from .cobol_layout import FIXED_COBOL, PLAIN_TEXT, classify_source
+from .decisions import Decision
 from .judge import (
     NameJudge,
     clip_to_candidate_line,
@@ -29,9 +17,10 @@ from .judge import (
     unmark_candidate_line,
 )
 from .overlaps import resolve_overlaps
-from .policy import apply_name_policy, instruction_text_requires_anonymization
+from .policy import NAME_POLICY_TABLE, apply_name_policy, has_minimum_watchlist_context, instruction_text_requires_anonymization
 from .review_decisions import ReviewDecisions, source_line
-from .text_matching import span_is_code
+from .text_matching import prepare_watchlist, span_is_code, name_word_spans, marked_source_line, source_findings, source_occurrence_id
+from .llm import NAME_VERIFIER_ENABLED
 from .source_reader import (
     SourceDecodingError,
     UnsupportedSourceEncodingError,
@@ -44,26 +33,25 @@ def scan_path(
     entities: set[str] | None = None,
     extra_watchlists: list[Path] | None = None,
     employee_rosters: list[Path] | None = None,
-    include_default_names: bool = True,
-    detect_unknown_names: bool = False,
-    case_shape_enabled: bool = True,
-    unknown_name_min_length: int = 4,
+    include_default_names: bool = False,
     name_scope: str = "context",
     skip_root: Path | list[Path] | None = None,
     use_presidio: bool = True,
     presidio_model: str = "it_core_news_sm",
     diagnostics: list[str] | None = None,
     not_complete_files: list[dict[str, str]] | None = None,
-    review_items: list[ReviewItem] | None = None,
     identifier_review_decisions: list[dict[str, object]] | None = None,
     resolved_review_files: list[str] | None = None,
     review_answers: ReviewDecisions | None = None,
     name_judge: NameJudge | None = None,
     name_verifier: object | None = None,
+    approved_words: frozenset[str] = frozenset(),
+    verifier_enabled: bool = NAME_VERIFIER_ENABLED,
     name_extractor: object | None = None,
     deterministic_names_enabled: bool = True,
     progress: Callable[[str], None] | None = None,
     source_hashes: dict[str, str] | None = None,
+    file_times: dict[str, float] | None = None,
 ) -> list[scanner.Finding]:
     """Run the current file pipeline while preserving the legacy output shape."""
 
@@ -80,7 +68,9 @@ def scan_path(
         if deterministic_names_enabled
         else []
     )
-    name_regex = scanner.compile_name_regex(names) if "NAME" in selected else None
+    entries, pair_words = prepare_watchlist(names)
+    watchlist_words = frozenset(scanner.fold_watchlist_value(word) for word in names)
+    name_regex = scanner.compile_name_regex([word for word in names if scanner.fold_watchlist_value(word) not in entries]) if "NAME" in selected else None
     roster_name_regex = (
         scanner.compile_name_regex(roster_names, min_single_token_length=2)
         if deterministic_names_enabled and "NAME" in selected
@@ -112,12 +102,17 @@ def scan_path(
         if deterministic_names_enabled and use_presidio and "NAME" in selected
         else None
     )
-    strong_names = [name for name in roster_names if len(name.split()) >= 2]
-    protected_regex = (
-        scanner.compile_name_regex(strong_names, min_single_token_length=2)
-        if deterministic_names_enabled and strong_names and "NAME" in selected
-        else None
-    )
+    if deterministic_names_enabled and use_presidio and "NAME" in selected and presidio_analyzer is None:
+        raise RuntimeError("spaCy/Presidio is unavailable; use --no-presidio to disable it")
+    if progress is not None:
+        detectors = sorted(selected - {"NAME"})
+        if deterministic_names_enabled and "NAME" in selected:
+            detectors.extend(["watchlist", "watchlist pairs", "folded watchlist", "identifier watchlist"])
+            if presidio_analyzer is not None:
+                detectors.append(f"spaCy ({presidio_model})")
+        if name_extractor is not None and "NAME" in selected:
+            detectors.append("LLM extractor")
+        progress("Active detectors: " + (", ".join(detectors) or "none"))
     findings: list[scanner.Finding] = []
     roster_paths = {
         path.resolve()
@@ -130,6 +125,7 @@ def scan_path(
     ]
 
     for index, path in enumerate(paths, start=1):
+        file_started = time.perf_counter()
         relative_file = scanner.relative_name(path, input_path)
         if progress is not None:
             progress(f"Analyzing file {index}/{len(paths)}: {relative_file}")
@@ -145,15 +141,14 @@ def scan_path(
                 name_regex,
                 roster_name_regex,
                 roster_matricula_values,
-                detect_unknown_names if deterministic_names_enabled else False,
-                unknown_name_min_length,
-                name_scope,
+                "all" if layout.format == PLAIN_TEXT else name_scope,
                 presidio_analyzer=presidio_analyzer,
                 name_extractor=name_extractor,
-                watchlist_pair_values=tuple(names),
+                watchlist_pair_values=entries, pair_words=pair_words,
                 layout=layout,
-                case_shape_enabled=case_shape_enabled and deterministic_names_enabled,
             )
+            file_findings = [replace(finding, context=marked_source_line(source.text, finding.start, finding.end))
+                             if finding.entity_type == "NAME" else finding for finding in file_findings]
             identifier_findings = [
                 finding
                 for finding in file_findings
@@ -161,60 +156,49 @@ def scan_path(
                     finding.source == "identifier_watchlist" or span_is_code(layout, finding.start, finding.end))
             ]
             for finding in identifier_findings:
-                # A line-scoped human ``not_person`` answer is the only way
-                # an identifier hit stops blocking release. A ``person``
-                # answer cannot rename code automatically, so it remains
-                # review-required until the source identifier is changed.
-                if (
-                    review_answers is not None
-                    and review_answers.answer_for(
-                        finding.text,
-                        source_line(finding.context, finding.text),
-                    )
-                    == "not_person"
-                ):
-                    if relative_file not in resolved_reviews:
-                        resolved_reviews.append(relative_file)
-                    continue
-                identifier_reviews.append(
-                    _identifier_review_decision(finding, source.sha256)
-                )
-            # Identifiers can have references outside this batch. They are
-            # queued for a reviewer, never judged or rewritten automatically.
-            file_findings = [
-                finding
-                for finding in file_findings
-                if finding not in identifier_findings
-            ]
-            manual_hidden, file_findings = _apply_review_answers(
-                file_findings,
-                review_answers,
+                answer = review_answers.answer_for(finding.logical_candidate or finding.text, finding.review_line or source_line(finding.context, finding.text), finding.review_key) if review_answers else None
+                row = policy_row(finding, source.sha256, code=True, answer=answer,
+                                       approved=scanner.fold_watchlist_value(finding.text) in approved_words)
+                identifier_reviews.append(row)
+                if row["policy_outcome"] == "leave_unchanged" and relative_file not in resolved_reviews:
+                    resolved_reviews.append(relative_file)
+            code_spans = {(finding.start, finding.end) for finding in identifier_findings}
+            file_findings = [finding for finding in file_findings
+                             if (finding.start, finding.end) not in code_spans or finding.entity_type != "NAME"]
+            code_hidden = [finding for finding, row in zip(identifier_findings, identifier_reviews[-len(identifier_findings):])
+                           if row["policy_outcome"] == "anonymize_whole"] if identifier_findings else []
+            file_findings = review_name_findings(
+                file_findings, file_sha256=source.sha256, name_judge=name_judge,
+                name_verifier=name_verifier, layout=layout, approved_words=approved_words,
+                verifier_enabled=verifier_enabled,
+                watchlist_words=watchlist_words,
+                review_answers=review_answers, decisions=identifier_reviews,
             )
-            if name_judge is not None:
-                protected_ranges = (
-                    [match.span() for match in protected_regex.finditer(source.text)]
-                    if protected_regex is not None
-                    else []
-                )
-                file_findings = review_name_findings(
-                    file_findings,
-                    protected_ranges,
-                    file_sha256=source.sha256,
-                    name_judge=name_judge,
-                    name_verifier=name_verifier,
-                    review_items=review_items,
-                    layout=layout,
-                )
-            file_findings = [*manual_hidden, *file_findings]
+            file_findings = [*code_hidden, *file_findings]
         except (SourceDecodingError, UnsupportedSourceEncodingError) as exc:
             reason = exc.reason
             message = f"{relative_file}: {reason}: {exc}"
+        except RuntimeError as exc:
+            reason = "detector failed"
+            message = f"{relative_file}: {exc}"
         except OSError as exc:
             reason = "source_read_error"
             message = f"{relative_file}: {reason}: {exc}"
         else:
             findings.extend(file_findings)
+            if file_times is not None:
+                file_times[relative_file] = time.perf_counter() - file_started
             continue
+
+        finally:
+            for model in (name_extractor, name_judge, name_verifier):
+                cache = getattr(model, "_response_cache", None)
+                if cache is not None:
+                    try:
+                        cache.flush()
+                    except OSError as exc:
+                        diag.append(f"Cache not saved; answers remain in memory: {exc}")
+                        cache.path = None
 
         incomplete.append(
             {
@@ -225,30 +209,36 @@ def scan_path(
             }
         )
         diag.append(f"NOT_COMPLETE: {message}")
+        if file_times is not None:
+            file_times[relative_file] = time.perf_counter() - file_started
 
     return list(resolve_overlaps(findings).selected)
 
 
-def _identifier_review_decision(
+def policy_row(
     finding: scanner.Finding,
     file_sha256: str,
+    *, code: bool = False, answer: str | None = None, approved: bool = False,
 ) -> dict[str, object]:
-    """Return a queue-compatible audit row for an unchanged identifier."""
+    """Record a human answer or a required code review through policy."""
 
-    occurrence, _ = finding.to_candidate_records(
-        file_sha256=file_sha256,
-        detector_version="identifier-watchlist-v1",
-    )
+    occurrence_id = source_occurrence_id(finding, file_sha256)
     decision = apply_name_policy(
-        occurrence_id=occurrence.occurrence_id, model_context=finding.context,
-        judge_decision=None, stronger_person_overlap=False, code_sensitive_identifier=True)
+        occurrence_id=occurrence_id, model_context=finding.context,
+        judge_decision=None, code_sensitive_identifier=code,
+        review_answer=answer, watchlist_pair=finding.source == "watchlist_pair",
+        watchlist_single=finding.source == "watchlist", approved_word=approved)
     return {
         "file": finding.file,
+        "start": finding.start, "end": finding.end, "review_answer": answer,
         "line": finding.line,
         "column": finding.column,
         "text": finding.text,
         "context": finding.context,
-        "source": finding.source,
+        "logical_candidate": finding.logical_candidate, "logical_context": finding.logical_context,
+            "review_line": finding.review_line, "review_key": finding.review_key,
+        "source": finding.source, "approved": approved, "watchlist": finding.source in {"watchlist", "path_watchlist"},
+        "code_sensitive_identifier": code,
         "policy_outcome": decision.outcome,
         "policy_reading": decision.reading,
         "policy_decision": decision.to_dict(),
@@ -258,275 +248,108 @@ def _identifier_review_decision(
 def _apply_review_answers(
     findings: list[scanner.Finding],
     review_answers: ReviewDecisions | None,
+    *, decisions: list[dict[str, object]] | None = None, file_sha256: str = "0" * 64, layout=None,
 ) -> tuple[list[scanner.Finding], list[scanner.Finding]]:
-    """Apply line-scoped human answers before a model is considered.
-
-    A reviewer may make a confirmed word stricter (``person``) everywhere or
-    on one exact line. A ``not_person`` answer removes only the same folded
-    word on the same visible line, and never overrules a direct person cue.
-    """
-
-    if review_answers is None:
-        return [], findings
-    hidden: list[scanner.Finding] = []
-    pending: list[scanner.Finding] = []
+    """Apply exact word-and-line answers to discovered source spans."""
+    hidden, pending = [], []
     for finding in findings:
-        if finding.entity_type != "NAME" or finding.source == "watchlist_pair":
+        if finding.entity_type != "NAME" or review_answers is None:
             pending.append(finding)
             continue
         context = finding.logical_context or clip_to_candidate_line(finding.context, finding.text)
-        answer = review_answers.answer_for(finding.text, source_line(context, finding.text))
-        if answer == "person":
-            hidden.append(finding)
-            continue
-        if answer == "not_person":
-            _, reasons = assess_name_evidence(candidate=finding.text, context=context)
-            if "clue:direct_person_cue" not in reasons:
+        line = finding.review_line or source_line(context, finding.text)
+        word = finding.logical_candidate or finding.text
+        answer = review_answers.answer_for(word, line, finding.review_key)
+        parts = [finding]
+        spans = name_word_spans(word)
+        if answer is None and len(spans) > 1 and any(
+            review_answers.answer_for(word[start:end], line, finding.review_key) for start, end in spans
+        ):
+            if finding.logical and layout is not None:
+                parts = [hit for start, end in spans for hit in source_findings(
+                    replace(finding, start=finding.logical_start + start, end=finding.logical_start + end), finding.logical, layout)]
+            else:
+                parts = [replace(finding, text=word[start:end], start=finding.start + start,
+                                 end=finding.start + end, column=finding.column + start,
+                                 context=context.replace(f"[[{word}]]", f"{word[:start]}[[{word[start:end]}]]{word[end:]}", 1))
+                         for start, end in spans]
+        for part in parts:
+            answer = review_answers.answer_for(part.logical_candidate or part.text, line, part.review_key)
+            if answer is None:
+                pending.append(part)
                 continue
-        pending.append(finding)
+            row = policy_row(part, file_sha256, answer=answer)
+            if decisions is not None:
+                decisions.append(row)
+            if row["policy_outcome"] == "anonymize_whole":
+                hidden.append(part)
     return hidden, pending
 
 
 def review_name_findings(
-    findings: list[scanner.Finding],
-    protected_ranges: list[tuple[int, int]],
-    *,
-    file_sha256: str,
-    name_judge: NameJudge,
-    name_verifier: object | None = None,
-    review_items: list[ReviewItem] | None = None,
-    layout=None,
+    findings: list[scanner.Finding], *, file_sha256: str,
+    name_judge: NameJudge | None, name_verifier: object | None = None,
+    approved_words: frozenset[str] = frozenset(),
+    watchlist_words: frozenset[str] = frozenset(),
+    verifier_enabled: bool = NAME_VERIFIER_ENABLED, layout=None,
+    review_answers: ReviewDecisions | None = None,
+    decisions: list[dict[str, object]] | None = None,
 ) -> list[scanner.Finding]:
-    """Run the NAME decision stages and collect safe correction-review items.
-
-    A correction item never makes text readable: its candidate remains in the
-    returned findings and will be anonymized.  The optional list is only an
-    in-memory bridge until the later review-loop phase writes grouped files.
-    """
-
-    kept: list[scanner.Finding] = []
-    name_findings = [finding for finding in findings if finding.entity_type == "NAME"]
-    total_names = len(name_findings)
-    reviewed_names = 0
-    if total_names:
-        name_judge.progress_update(f"reviewing {total_names} name candidates")
-
+    """Discover full names, then apply exact word-and-line corrections."""
+    kept = []
+    audit = name_judge.decisions if name_judge else decisions if decisions is not None else []
+    total = sum(hit.entity_type == "NAME" for hit in findings)
+    if name_judge:
+        name_judge.progress_update(f"reviewing {total} name candidates")
+    count = 0
     for finding in findings:
         if finding.entity_type != "NAME":
             kept.append(finding)
             continue
-        reviewed_names += 1
-        occurrence, _ = finding.to_candidate_records(
-            file_sha256=file_sha256,
-            detector_version="legacy-judge-input-v1",
-        )
-        snippet = finding.logical_context or clip_to_candidate_line(finding.context, finding.text)
-        code_sensitive_identifier = layout is not None and span_is_code(layout, finding.start, finding.end)
-        if code_sensitive_identifier:
-            decision = apply_name_policy(
-                occurrence_id=occurrence.occurrence_id, model_context=snippet, judge_decision=None,
-                stronger_person_overlap=False, code_sensitive_identifier=True)
-            _record_decision(name_judge, finding, None, decision, False, policy_gate="code")
-            if review_items is not None:
-                review_items.append(ReviewItem(occurrence_id=occurrence.occurrence_id,
-                                              reason=decision.reading, required=True))
-            continue
-        # A continued literal remains a physical finding for replacement and
-        # audit IDs, but the judge validates against its joined literal value.
-        judge_finding = (
-            replace(finding, text=finding.logical_candidate, context=snippet)
-            if finding.logical_context and finding.logical_candidate
-            else finding
-        )
-
-        if finding.source == "watchlist_pair":
-            policy_decision = apply_name_policy(
-                occurrence_id=occurrence.occurrence_id,
-                model_context=snippet,
-                judge_decision=None,
-                stronger_person_overlap=False,
-                code_sensitive_identifier=code_sensitive_identifier,
-                watchlist_pair=True,
-            )
-            _record_decision(
-                name_judge,
-                finding,
-                judge_decision=None,
-                policy_decision=policy_decision,
-                cached=False,
-                policy_gate="watchlist_pair",
-                verifier_decision=None,
-                evidence_reasons=("evidence:watchlist_pair",),
-                unresolved_evidence=True,
-            )
-            kept.append(finding)
-            continue
-
-        if instruction_text_requires_anonymization(snippet):
-            policy_decision = apply_name_policy(
-                occurrence_id=occurrence.occurrence_id,
-                model_context=snippet,
-                judge_decision=None,
-                stronger_person_overlap=False,
-                code_sensitive_identifier=code_sensitive_identifier,
-            )
-            _record_decision(
-                name_judge,
-                finding,
-                judge_decision=None,
-                policy_decision=policy_decision,
-                cached=False,
-                policy_gate="instruction_text",
-                verifier_decision=None,
-                evidence_reasons=("evidence:not_evaluated_instruction_gate",),
-                unresolved_evidence=True,
-            )
-            if review_items is not None:
-                review_items.append(ReviewItem(
-                    occurrence_id=occurrence.occurrence_id,
-                    reason=policy_decision.reading,
-                    required=False,
-                ))
-            kept.append(finding)
-            continue
-
-        if _is_protected(finding, protected_ranges):
-            name_judge.progress_update(
-                f"candidate {reviewed_names}/{total_names}: protected "
-                f"{finding.file}:{finding.line}"
-            )
-            policy_decision = apply_name_policy(
-                occurrence_id=occurrence.occurrence_id,
-                model_context=snippet,
-                judge_decision=None,
-                protected_identity=True,
-                stronger_person_overlap=False,
-                code_sensitive_identifier=code_sensitive_identifier,
-            )
-            _record_decision(
-                name_judge,
-                finding,
-                judge_decision=None,
-                policy_decision=policy_decision,
-                cached=False,
-                policy_gate="protected_identity",
-                verifier_decision=None,
-                evidence_reasons=("evidence:not_evaluated_protected_identity",),
-                unresolved_evidence=True,
-            )
-            kept.append(finding)
-            continue
-
-        name_judge.progress_update(
-            f"candidate {reviewed_names}/{total_names}: judging "
-            f"{finding.file}:{finding.line}"
-        )
-        try:
-            judge_decision, cached = name_judge.decide(
-                judge_finding,
-                snippet,
-                occurrence.occurrence_id,
-            )
-        except Exception as exc:  # pragma: no cover - defensive model boundary
-            _record_runtime_failure(name_judge, finding, "judge", exc)
-            policy_decision = apply_name_policy(
-                occurrence_id=occurrence.occurrence_id,
-                model_context=snippet,
-                judge_decision=None,
-                stronger_person_overlap=False,
-                code_sensitive_identifier=code_sensitive_identifier,
-            )
-            _record_decision(
-                name_judge,
-                finding,
-                judge_decision=None,
-                policy_decision=policy_decision,
-                cached=False,
-                policy_gate="judge_runtime_failure",
-                verifier_decision=None,
-                evidence_reasons=("evidence:not_evaluated_judge_runtime_failure",),
-                unresolved_evidence=True,
-            )
-            kept.append(finding)
-            continue
-        unresolved_evidence, evidence_reasons = assess_name_evidence(
-            candidate=judge_finding.text,
-            context=snippet,
-        )
-        watchlist_single = finding.source == "watchlist" and not any(char.isspace() for char in finding.text)
-        direct_person_cue = "clue:direct_person_cue" in evidence_reasons
-        verifier_decision = _verify_candidate(
-            name_judge=name_judge,
-            name_verifier=name_verifier,
-            judge_decision=judge_decision,
-            occurrence_id=occurrence.occurrence_id,
-            finding=judge_finding,
-            snippet=snippet,
-            evidence_reasons=evidence_reasons,
-            verify_person=watchlist_single and not direct_person_cue,
-        )
-        policy_decision = apply_name_policy(
-            occurrence_id=occurrence.occurrence_id,
-            model_context=snippet,
-            judge_decision=judge_decision,
-            verifier_decision=verifier_decision,
-            stronger_person_overlap=False,
-            code_sensitive_identifier=code_sensitive_identifier,
-            watchlist_single=watchlist_single,
-            direct_person_cue=direct_person_cue,
-        )
-        person_union_findings: list[scanner.Finding] = []
-        if (
-            judge_decision.outcome in {"anonymize_whole", "anonymize_part"}
-            and judge_decision.person_texts
-            and policy_decision.outcome != "leave_unchanged"
-        ):
+        occurrence_id = source_occurrence_id(finding, file_sha256)
+        context = finding.logical_context or clip_to_candidate_line(finding.context, finding.text)
+        candidate = replace(finding, text=finding.logical_candidate or finding.text, context=context)
+        word = scanner.fold_watchlist_value(candidate.text)
+        code = layout is not None and span_is_code(layout, finding.start, finding.end)
+        pair = finding.source == "watchlist_pair"
+        watchlist = finding.source == "watchlist" or word in watchlist_words
+        approved = word in approved_words
+        gates = dict(model_context=context, code_sensitive_identifier=code, watchlist_pair=pair,
+                     watchlist_single=watchlist, approved_word=approved, verifier_enabled=verifier_enabled)
+        judged, verified, cached = None, None, False
+        gate = apply_name_policy(occurrence_id=occurrence_id, judge_decision=None, **gates)
+        needs_model = gate.reading == NAME_POLICY_TABLE["no_judge"][1]
+        count += 1
+        if needs_model and name_judge is not None:
+            name_judge.progress_update(f"candidate {count}/{total}: judging {finding.file}:{finding.line}")
             try:
-                person_union_findings = (
-                    [finding]
-                    if finding.logical_context
-                    else _candidate_person_union_findings(
-                        finding=finding,
-                        snippet=snippet,
-                        decision=judge_decision,
-                    )
-                )
-            except ValueError as exc:
-                # Validation normally catches this before policy.  Keep this
-                # defensive boundary because an unanchored replacement must
-                # never make source text readable.
-                policy_decision = Decision(
-                    occurrence_id=occurrence.occurrence_id,
-                    stage="policy",
-                    outcome="anonymize_and_review",
-                    person_scope="whole",
-                    reading=f"invalid person span; candidate requires review: {exc}",
-                )
-        _record_decision(
-            name_judge,
-            finding,
-            judge_decision=judge_decision,
-            policy_decision=policy_decision,
-            cached=cached,
-            policy_gate="single_policy",
-            verifier_decision=verifier_decision,
-            evidence_reasons=evidence_reasons,
-            unresolved_evidence=unresolved_evidence,
-        )
-        if policy_decision.outcome == "anonymize_and_review":
-            if review_items is not None:
-                review_items.append(
-                    ReviewItem(
-                        occurrence_id=occurrence.occurrence_id,
-                        reason=policy_decision.reading,
-                        required=False,
-                    )
-                )
-        if person_union_findings:
-            kept.extend(person_union_findings)
-        elif policy_decision.outcome != "leave_unchanged":
-            kept.append(finding)
-
+                judged, cached = name_judge.decide(candidate, context, occurrence_id)
+            except Exception as exc:
+                _record_runtime_failure(name_judge, finding, "judge", exc)
+            if judged is not None and watchlist and verifier_enabled:
+                verified = _verify_candidate(name_judge=name_judge, name_verifier=name_verifier,
+                                             judge_decision=judged, occurrence_id=occurrence_id,
+                                             finding=candidate, snippet=context)
+        targets = [finding]
+        if judged is not None and judged.outcome in {"anonymize_whole", "anonymize_part"} and judged.person_texts:
+            try:
+                targets = _candidate_person_union_findings(finding=finding, snippet=context,
+                                                           decision=judged, layout=layout)
+            except ValueError:
+                judged = None
+        hidden, pending = _apply_review_answers(targets, review_answers, decisions=audit,
+                                                file_sha256=file_sha256, layout=layout)
+        kept.extend(hidden)
+        for target in pending:
+            target_id = source_occurrence_id(target, file_sha256)
+            decision = apply_name_policy(occurrence_id=target_id, **gates,
+                                         judge_decision=replace(judged, occurrence_id=target_id) if judged else None,
+                                         verifier_decision=replace(verified, occurrence_id=target_id) if verified else None)
+            gate = "watchlist_pair" if pair else "instruction_text" if instruction_text_requires_anonymization(context) else ""
+            _record_decision(name_judge, target, judged, decision, cached, policy_gate=gate,
+                             verifier_decision=verified, watchlist=watchlist, approved=approved, decisions=audit)
+            if decision.outcome != "leave_unchanged":
+                kept.append(target)
     return kept
 
 
@@ -538,23 +361,14 @@ def _verify_candidate(
     occurrence_id: str,
     finding: scanner.Finding,
     snippet: str,
-    evidence_reasons: tuple[str, ...],
-    verify_person: bool = False,
 ) -> Decision | None:
-    if (
-        name_verifier is None
-        or not (
-            judge_decision.outcome == "propose_unchanged"
-            or verify_person and judge_decision.outcome in {"anonymize_whole", "anonymize_part"}
-        )
-    ):
+    if name_verifier is None or judge_decision.outcome != "propose_unchanged":
         return None
     try:
         return name_verifier.verify(
             occurrence_id=occurrence_id,
             candidate=finding.text,
             context=snippet,
-            evidence_reasons=evidence_reasons,
         )
     except Exception as exc:  # pragma: no cover - defensive plug-in boundary
         _record_runtime_failure(name_judge, finding, "verifier", exc)
@@ -566,6 +380,7 @@ def _candidate_person_union_findings(
     finding: scanner.Finding,
     snippet: str,
     decision: Decision,
+    layout=None,
 ) -> list[scanner.Finding]:
     """Return replacement spans for the union of candidate and person text.
 
@@ -575,9 +390,9 @@ def _candidate_person_union_findings(
     original surname or given-name candidate.
     """
 
-    line, candidate_start, candidate_end = unmark_candidate_line(snippet, finding.text)
+    line, candidate_start, candidate_end = unmark_candidate_line(snippet, finding.logical_candidate or finding.text)
     person_spans = locate_person_texts(
-        candidate=finding.text,
+        candidate=finding.logical_candidate or finding.text,
         context=snippet,
         person_texts=decision.person_texts,
     )
@@ -608,6 +423,10 @@ def _candidate_person_union_findings(
         else:
             merged.append((start, end))
 
+    if finding.logical and layout is not None:
+        return [hit for start, end in merged for hit in source_findings(
+            replace(finding, start=start, end=end), finding.logical, layout)]
+
     result: list[scanner.Finding] = []
     for start, end in merged:
         source_start = finding.start + start - candidate_start
@@ -630,94 +449,8 @@ def _candidate_person_union_findings(
     return result
 
 
-def _person_text_leftovers(
-    *,
-    finding: scanner.Finding,
-    snippet: str,
-    person_findings: list[scanner.Finding],
-) -> list[scanner.Finding]:
-    """Return word-shaped original-candidate pieces outside person spans.
-
-    Spaces and punctuation between independently anchored person spans are
-    syntactic separators, not candidates.  Every leftover word still needs a
-    blinded verifier before this step allows it to remain readable.
-    """
-
-    line, candidate_start, candidate_end = unmark_candidate_line(snippet, finding.text)
-    covered: list[tuple[int, int]] = []
-    for person in person_findings:
-        start = candidate_start + person.start - finding.start
-        end = candidate_start + person.end - finding.start
-        start = max(start, candidate_start)
-        end = min(end, candidate_end)
-        if start < end:
-            covered.append((start, end))
-    covered.sort()
-
-    gaps: list[tuple[int, int]] = []
-    cursor = candidate_start
-    for start, end in covered:
-        if cursor < start:
-            gaps.append((cursor, start))
-        cursor = max(cursor, end)
-    if cursor < candidate_end:
-        gaps.append((cursor, candidate_end))
-
-    leftovers: list[scanner.Finding] = []
-    for start, end in gaps:
-        for match in re.finditer(r"[^\W\d_](?:['’][^\W\d_]+|[^\W\d_])*", line[start:end]):
-            word_start = start + match.start()
-            word_end = start + match.end()
-            text = line[word_start:word_end]
-            source_start = finding.start + word_start - candidate_start
-            leftovers.append(
-                scanner.Finding(
-                    file=finding.file,
-                    entity_type="NAME",
-                    text=text,
-                    start=source_start,
-                    end=source_start + len(text),
-                    line=finding.line,
-                    column=finding.column + word_start - candidate_start,
-                    confidence=finding.confidence,
-                    context=f"{line[:word_start]}[[{text}]]{line[word_end:]}",
-                    source=finding.source,
-                )
-            )
-    return leftovers
 
 
-def _verify_partial_leftovers(
-    *,
-    name_judge: NameJudge,
-    name_verifier: object | None,
-    file_sha256: str,
-    leftovers: list[scanner.Finding],
-) -> tuple[Decision, ...]:
-    """Require a blinded verifier approval for every readable leftover word."""
-
-    if not leftovers or name_verifier is None:
-        return ()
-    decisions: list[Decision] = []
-    for leftover in leftovers:
-        occurrence, _ = leftover.to_candidate_records(
-            file_sha256=file_sha256,
-            detector_version="judge-partial-leftover-v1",
-        )
-        snippet = clip_to_candidate_line(leftover.context, leftover.text)
-        _, reasons = assess_name_evidence(candidate=leftover.text, context=snippet)
-        try:
-            decision = name_verifier.verify(
-                occurrence_id=occurrence.occurrence_id,
-                candidate=leftover.text,
-                context=snippet,
-                evidence_reasons=reasons,
-            )
-        except Exception as exc:  # pragma: no cover - defensive plug-in boundary
-            _record_runtime_failure(name_judge, leftover, "verifier", exc)
-            return ()
-        decisions.append(decision)
-    return tuple(decisions)
 
 
 def _record_runtime_failure(
@@ -742,16 +475,6 @@ def _record_runtime_failure(
     )
 
 
-def _is_protected(
-    finding: scanner.Finding,
-    protected_ranges: list[tuple[int, int]],
-) -> bool:
-    """Use source offsets so overlapping candidates retain identity protection."""
-
-    return any(
-        finding.start < end and start < finding.end
-        for start, end in protected_ranges
-    )
 
 
 def _record_decision(
@@ -762,8 +485,8 @@ def _record_decision(
     cached: bool,
     policy_gate: str = "",
     verifier_decision: Decision | None = None,
-    evidence_reasons: tuple[str, ...] = (),
-    unresolved_evidence: bool = True,
+    watchlist: bool = False, approved: bool = False,
+    decisions: list[dict[str, object]] | None = None,
 ) -> None:
     """Preserve the existing combined decision audit during the migration."""
 
@@ -782,13 +505,15 @@ def _record_decision(
         if verifier_decision is not None and verifier_decision.outcome == "error"
         else ""
     )
-    name_judge.decisions.append(
+    (decisions if decisions is not None else name_judge.decisions).append(
         {
             "file": finding.file,
+            "start": finding.start, "end": finding.end,
             "line": finding.line,
             "column": finding.column,
             "text": finding.text,
             "source": finding.source,
+            "watchlist": watchlist or finding.source in {"watchlist", "watchlist_pair"}, "approved": approved,
             "decision": policy_decision.outcome,
             "judge_outcome": (
                 judge_decision.outcome if judge_decision is not None else "not_called"
@@ -815,13 +540,13 @@ def _record_decision(
             "reason_code": reason_code,
             "policy_gate": policy_gate,
             "policy_reading": policy_decision.reading,
-            "unresolved_evidence": unresolved_evidence,
-            "evidence_reasons": list(evidence_reasons),
-            "prompt_version": name_judge.prompt_version,
+            "prompt_version": name_judge.prompt_version if name_judge else "",
             "cached": cached,
             "error": error,
             "verifier_error": verifier_error,
             "context": finding.context,
+            "logical_candidate": finding.logical_candidate, "logical_context": finding.logical_context,
+            "review_line": finding.review_line, "review_key": finding.review_key,
             "judge_decision": (
                 judge_decision.to_dict() if judge_decision is not None else None
             ),
