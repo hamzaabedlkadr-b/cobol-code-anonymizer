@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import socket
 import time
 import urllib.error
 import urllib.request
@@ -18,6 +19,7 @@ NAME_EXTRACT_MODEL = "ministral-3:3b"
 NAME_JUDGE_MODEL = "ministral-3:3b"
 # The verifier is a separate role.  It may initially use the same local model
 # tag, but it receives an independent prompt and never sees the judge answer.
+NAME_VERIFIER_ENABLED = True
 NAME_VERIFIER_MODEL = NAME_JUDGE_MODEL
 OLLAMA_TIMEOUT = 60.0
 
@@ -103,6 +105,7 @@ def _call_ollama_json_once(
         "messages": messages,
         "format": schema,
         "stream": False,
+        "think": False,
         "options": {"temperature": 0, **(options or {})},
     }
     body = json.dumps(payload).encode("utf-8")
@@ -115,7 +118,7 @@ def _call_ollama_json_once(
     try:
         with urllib.request.urlopen(request, timeout=timeout) as response:
             raw = json.loads(response.read().decode("utf-8"))
-    except (json.JSONDecodeError, TimeoutError, urllib.error.URLError) as exc:
+    except (json.JSONDecodeError, TimeoutError, socket.timeout, urllib.error.URLError) as exc:
         return LlmJsonResult(
             parsed=None,
             content="",

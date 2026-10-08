@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from dataclasses import asdict, dataclass, replace
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Callable
 
@@ -13,13 +13,13 @@ from .llm import (
     OLLAMA_HOST,
     OLLAMA_TIMEOUT,
     LlmJsonResult,
-    call_ollama_json,
+    call_ollama_json, validate_schema_value,
 )
-from .logical_text import LogicalPiece, extraction_texts
-from .scanner import Finding, context_for, line_column, unknown_name_scan_ranges
+from .llm_cache import PersistentResponseCache, response_cache_key
+from .logical_text import LogicalPiece, LogicalText, extraction_texts
+from .scanner import Finding, context_for, line_column, free_text_scan_ranges
 from .source_reader import split_source_lines
-from .text_matching import tolerant_person_occurrences
-from .policy import apply_name_policy
+from .text_matching import tolerant_person_occurrences, equivalent_person_occurrences, source_findings
 
 
 EXTRACTION_SCHEMA = {
@@ -71,22 +71,10 @@ class ExtractionRecord:
     end: int
     text: str
     pieces: tuple[LogicalPiece, ...] = ()
+    kind: str = "text"
 
     def source_spans(self, start: int, end: int) -> tuple[tuple[int, int], ...]:
-        """Return original source spans for a model-relative text span."""
-
-        if not self.pieces:
-            return ((self.start + start, self.start + end),)
-        spans: list[tuple[int, int]] = []
-        for piece in self.pieces:
-            logical_start = max(start, piece.logical_start)
-            logical_end = min(end, piece.logical_end)
-            if logical_start >= logical_end:
-                continue
-            source_start = piece.source_start + logical_start - piece.logical_start
-            source_end = source_start + logical_end - logical_start
-            spans.append((source_start, source_end))
-        return tuple(spans)
+        return LogicalText(self.text, self.pieces or (LogicalPiece(0, len(self.text), self.start, self.end),)).source_spans(start, end)
 
 
 def build_extraction_records(
@@ -107,7 +95,7 @@ def build_extraction_records(
     record_id = 1
     if layout is not None:
         for logical in extraction_texts(layout):
-            if not logical.text.strip() or not logical.pieces:
+            if not logical.pieces or not any(char.isalpha() for char in logical.text):
                 continue
             first = logical.pieces[0]
             line, _ = line_column(text, first.source_start)
@@ -119,17 +107,18 @@ def build_extraction_records(
                     first.source_end,
                     logical.text,
                     logical.pieces,
+                    logical.kind,
                 )
             )
             record_id += 1
         return records
 
-    for range_start, range_end in unknown_name_scan_ranges(text, scope):
+    for range_start, range_end in free_text_scan_ranges(text, scope):
         cursor = range_start
         while cursor < range_end:
             newline = text.find("\n", cursor, range_end)
             end = range_end if newline == -1 else newline
-            if end > cursor and text[cursor:end].strip():
+            if any(char.isalpha() for char in text[cursor:end]):
                 line, _ = line_column(text, cursor)
                 records.append(ExtractionRecord(record_id, line, cursor, end, text[cursor:end]))
                 record_id += 1
@@ -156,43 +145,18 @@ def chunk_records(
 
 
 def locate_all(snippet: str, value: str) -> list[tuple[int, int]]:
-    """Locate every source occurrence using the approved anchoring sequence."""
+    """Anchor copies without using normalized-string offsets."""
     value = value.strip()
-    if not value:
-        return []
-    variants = [value]
-    encoded = value.replace("'", "''")
-    if encoded != value:
-        variants.append(encoded)
-    for variant in variants:
-        starts: list[int] = []
-        cursor = 0
-        while True:
-            index = snippet.find(variant, cursor)
-            if index == -1:
-                break
-            starts.append(index)
-            cursor = index + max(1, len(variant))
-        if starts:
-            return [(start, start + len(variant)) for start in starts]
-        lowered_snippet = snippet.casefold()
-        lowered_variant = variant.casefold()
-        cursor = 0
-        while True:
-            index = lowered_snippet.find(lowered_variant, cursor)
-            if index == -1:
-                break
-            starts.append(index)
-            cursor = index + max(1, len(lowered_variant))
-        if starts:
-            return [(start, start + len(variant)) for start in starts]
-    locations = tolerant_person_occurrences(snippet, value)
-    return locations if len(locations) == 1 else []
+    exact = equivalent_person_occurrences(snippet, value)
+    if exact:
+        return exact
+    matches = tolerant_person_occurrences(snippet, value)
+    return matches if len(matches) == 1 else []
 
 
 def build_messages(records: list[ExtractionRecord]) -> list[dict[str, str]]:
     data = [
-        {"record_id": record.record_id, "source_line": record.line, "text": record.text}
+        {"record_id": record.record_id, "text": record.text}
         for record in records
     ]
     return [
@@ -227,9 +191,15 @@ class NameExtractor:
         timeout: float = OLLAMA_TIMEOUT,
         chunk_lines: int = 25,
         progress: Callable[[str], None] | None = None,
+        model_digest: str = "", cache_dir: Path | None = None,
     ) -> None:
         if chunk_lines < 2:
             raise ValueError("chunk_lines must be at least 2")
+        if cache_dir is not None and not model_digest:
+            raise ValueError("extractor cache needs a model digest")
+        self.model_digest = model_digest
+        self.cache_hits = 0
+        self._response_cache = PersistentResponseCache(report_dir=cache_dir, stage="extractor")
         self.host = host
         self.model = model
         self.timeout = timeout
@@ -251,7 +221,6 @@ class NameExtractor:
         self.completion_tokens = 0
         self.anchored = 0
         self.unlocatable = 0
-        self.review_decisions: list[dict[str, object]] = []
         self.deduplicated = 0
         self.agreements = 0
         self.extractor_only = 0
@@ -321,7 +290,8 @@ class NameExtractor:
             self._progress(
                 f"{rel_file}: extraction chunk {index}/{len(chunks)} ({line_range})"
             )
-            result = self._call(chunk, canary=False)
+            local_chunk = [replace(record, record_id=i) for i, record in enumerate(chunk, 1)]
+            result = self._call(local_chunk, canary=False)
             audit: dict[str, object] = {
                 "file": rel_file,
                 "chunk": index,
@@ -341,82 +311,35 @@ class NameExtractor:
                 continue
 
             items = list(result.parsed.get("names", [])) if result.parsed else []
-            anchored, unlocatable = self._anchor_items(chunk, items)
-            for item in unlocatable:
-                affected = [record for record in chunk if record.record_id == item.get("record_id")]
-                for record in affected or chunk:
-                    for start, end in record.source_spans(0, len(record.text)):
-                        line, column = line_column(text, start)
-                        if any(row["file"] == rel_file and row["line"] == line for row in self.review_decisions):
-                            continue
-                        candidate = Finding(rel_file, "NAME", text[start:end], start, end,
-                                            line, column, 0.0, context_for(text, start, end), "llm_extraction")
-                        occurrence, _ = candidate.to_candidate_records(
-                            file_sha256="0" * 64, detector_version="unmatched-extraction-v1")
-                        decision = apply_name_policy(
-                            occurrence_id=occurrence.occurrence_id, model_context=candidate.context,
-                            judge_decision=None, stronger_person_overlap=False,
-                            code_sensitive_identifier=False, unmatched_extraction=True)
-                        self.review_decisions.append({
-                            "file": rel_file, "line": line, "column": column,
-                            "text": str(item.get("text") or "unknown name"),
-                            "context": candidate.context, "source": "llm_extraction",
-                            "policy_outcome": decision.outcome, "policy_reading": decision.reading,
-                            "policy_decision": decision.to_dict(),
-                        })
+            anchored, unlocatable = self._anchor_items(local_chunk, items)
+            if unlocatable:
+                self.complete = False
+                self.failure_reason = "extracted name not found in source"
+                self.errors += 1
+            if not unlocatable:
+                self._response_cache.put(self._cache_key(local_chunk), result.parsed)
             anchored_rows = []
-            for record in chunk:
+            for record in local_chunk:
                 for local_start, local_end, returned in anchored.get(record.record_id, []):
                     source_spans = record.source_spans(local_start, local_end)
                     if not source_spans:
                         self.unlocatable += 1
                         continue
-                    for start, end in source_spans:
-                        # Do not turn fixed-width literal padding into a NAME
-                        # replacement. The logical match may end on a piece
-                        # boundary immediately before source whitespace.
-                        while start < end and text[start].isspace():
-                            start += 1
-                        while start < end and text[end - 1].isspace():
-                            end -= 1
-                        if start >= end:
-                            continue
-                        key = (start, end)
-                        if key in seen:
-                            self.deduplicated += 1
-                            continue
-                        seen.add(key)
-                        line, column = line_column(text, start)
-                        findings.append(
-                            Finding(
-                                file=rel_file,
-                                entity_type="NAME",
-                                text=text[start:end],
-                                start=start,
-                                end=end,
-                                line=line,
-                                column=column,
-                                confidence=0.70,
-                                context=context_for(text, start, end),
-                                source="llm_extraction",
-                                logical_context=(
-                                    "'"
-                                    + record.text[:local_start]
-                                    + "[["
-                                    + record.text[local_start:local_end]
-                                    + "]]"
-                                    + record.text[local_end:]
-                                    + "'"
-                                    if len(record.pieces) > 1
-                                    else ""
-                                ),
-                                logical_candidate=(
-                                    record.text[local_start:local_end]
-                                    if len(record.pieces) > 1
-                                    else ""
-                                ),
-                            )
-                        )
+                    if layout is not None:
+                        logical = LogicalText(record.text, record.pieces, record.kind)
+                        template = Finding(rel_file, "NAME", record.text[local_start:local_end], local_start, local_end,
+                                           record.line, 1, 0.70, "", "llm_extraction")
+                        findings.extend(hit for hit in source_findings(template, logical, layout)
+                                        if (hit.start, hit.end) not in seen)
+                        seen.update(source_spans)
+                    else:
+                        for start, end in source_spans:
+                            if (start, end) in seen:
+                                continue
+                            seen.add((start, end))
+                            line, column = line_column(text, start)
+                            findings.append(Finding(rel_file, "NAME", text[start:end], start, end, line, column,
+                                                    0.70, context_for(text, start, end), "llm_extraction"))
                     anchored_rows.append(
                         {
                             "record_id": record.record_id,
@@ -428,7 +351,8 @@ class NameExtractor:
             self.unlocatable += len(unlocatable)
             audit.update(
                 {
-                    "status": "ok",
+                    "status": "error" if unlocatable else "ok",
+                    "error": self.failure_reason if unlocatable else "",
                     "returned": len(items),
                     "anchored": anchored_rows,
                     "unlocatable": unlocatable,
@@ -443,38 +367,6 @@ class NameExtractor:
         self._compare(rel_file, findings, deterministic or [])
         return findings
 
-    def write_audit(self, path: Path) -> None:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        payload = {
-            "model": self.model,
-            "host": self.host,
-            "scope_complete": self.complete,
-            "failure_reason": self.failure_reason,
-            "canary_status": self.canary_status,
-            "canary_reason": self.canary_reason,
-            "chunk_lines": self.chunk_lines,
-            "source_lines": self.source_lines,
-            "calls_per_1000_source_lines": self.calls_per_1000_source_lines,
-            "chunk_calls": self.chunk_calls,
-            "canary_calls": self.canary_calls,
-            "http_attempts": self.http_attempts,
-            "retries": self.retries,
-            "errors": self.errors,
-            "latency_s": self.latency_s,
-            "prompt_tokens": self.prompt_tokens,
-            "completion_tokens": self.completion_tokens,
-            "anchored": self.anchored,
-            "unlocatable": self.unlocatable,
-            "unmatched_lines": len(self.review_decisions),
-            "review_decisions": self.review_decisions,
-            "deduplicated": self.deduplicated,
-            "detector_agreements": self.agreements,
-            "extractor_only": self.extractor_only,
-            "detector_only": self.detector_only,
-            "comparisons": self.comparisons,
-            "chunks": self.chunks,
-        }
-        path.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
 
     @property
     def calls_per_1000_source_lines(self) -> float:
@@ -485,6 +377,14 @@ class NameExtractor:
         return self.chunk_calls * 1000 / self.source_lines
 
     def _call(self, records: list[ExtractionRecord], canary: bool) -> LlmJsonResult:
+        if not canary:
+            key = self._cache_key(records)
+            payload = self._response_cache.get(key)
+            if payload is not None:
+                if validate_schema_value(payload, EXTRACTION_SCHEMA) and not self._anchor_items(records, payload["names"])[1]:
+                    self.cache_hits += 1
+                    return LlmJsonResult(payload, "", 0.0, True)
+                self._response_cache.entries.pop(key, None)
         result = call_ollama_json(
             self.host,
             self.model,
@@ -525,6 +425,11 @@ class NameExtractor:
         self.prompt_tokens += result.prompt_tokens
         self.completion_tokens += result.completion_tokens
         return result
+
+    def _cache_key(self, records: list[ExtractionRecord]) -> str:
+        return response_cache_key(stage="extractor", messages=build_messages(records),
+                                  schema=EXTRACTION_SCHEMA, options={"temperature": 0},
+                                  model_digest=self.model_digest)
 
     def _progress(self, message: str) -> None:
         if self.progress is not None:

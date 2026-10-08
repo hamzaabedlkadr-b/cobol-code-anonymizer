@@ -21,10 +21,7 @@ measured flipping real names from `uncertain` to `reject`.
 
 from __future__ import annotations
 
-import json
 import hashlib
-import re
-import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
@@ -44,9 +41,10 @@ from .text_matching import (
     equivalent_person_occurrences,
     evidence_quote_is_anchored,
     normalize_person_text,
+    name_model_input,
 )
 
-JUDGE_PROMPT_VERSION = "exact-text-v4"
+JUDGE_PROMPT_VERSION = "exact-text-v5"
 MAX_PERSON_TEXT_LENGTH = 128
 PERSON_TEXT_RETRY_INSTRUCTION = (
     "Copy the name exactly as written in the line, including spelling errors. "
@@ -92,14 +90,6 @@ JUDGE_RESPONSE_SCHEMA = {
 # Compatibility import for callers that used the old constant name.  The
 # contents are the new exact-text contract.
 DECISION_SCHEMA = JUDGE_RESPONSE_SCHEMA
-
-SOURCE_LABELS = {
-    "employee_roster": "an exact match against the company's private employee roster",
-    "watchlist": "a watchlist of confirmed given-name or surname spellings",
-    "presidio_spacy": "an Italian named-entity model",
-    "unknown_name_heuristic": "a heuristic that flags unrecognised capitalised words",
-    "mixed": "more than one detector",
-}
 
 SYSTEM_PROMPT = """You are reviewing short snippets of Italian COBOL source code from legacy \
 banking, payroll, and public-administration systems. Each snippet contains one span marked \
@@ -176,25 +166,7 @@ def unmark_candidate_line(context: str, candidate: str) -> tuple[str, int, int]:
     return prefix + marked_text + suffix, len(prefix), len(prefix) + len(marked_text)
 
 
-def _candidate_region(line: str, candidate_start: int, candidate_end: int) -> tuple[int, int]:
-    """Return the one comment or literal region holding the candidate.
 
-    A partial model span is only useful when it stays in the same free-text
-    region as the detected candidate.  Code is intentionally not an expansion
-    region: a candidate there remains safe only as its original full span.
-    """
-
-    if is_comment_line(line):
-        return 0, len(line)
-
-    for match in QUOTED_LITERAL_RE.finditer(line):
-        if match.start() <= candidate_start and candidate_end <= match.end():
-            return match.start(), match.end()
-
-    inline_comment = line.find("*>")
-    if inline_comment != -1 and candidate_start >= inline_comment + 2:
-        return inline_comment, len(line)
-    raise ValueError("highlighted candidate is not in one comment or literal region")
 
 
 class PersonTextNotFoundError(ValueError):
@@ -247,9 +219,6 @@ def locate_person_texts(
     ordered = sorted(located)
     if any(previous[1] > current[0] for previous, current in zip(ordered, ordered[1:])):
         raise ValueError("person_texts must have separate non-overlapping source spans")
-    region_start, region_end = _candidate_region(line, candidate_start, candidate_end)
-    if any(start < region_start or end > region_end for start, end in located):
-        raise ValueError("each person_text must stay in the candidate comment or literal")
     return tuple(located)
 
 
@@ -346,28 +315,16 @@ def error_decision(
     )
 
 
-def build_messages(context: str, span: str, source: str = "") -> list[dict[str, str]]:
-    detected_by = SOURCE_LABELS.get(source)
-    provenance = f"Detected by: {detected_by}.\n" if detected_by else ""
+def build_messages(context: str, span: str) -> list[dict[str, str]]:
     return [
         {"role": "system", "content": SYSTEM_PROMPT},
-        {
-            "role": "user",
-            "content": (
-                f"{provenance}"
-                "BEGIN_UNTRUSTED_COBOL\n"
-                f"{context}\n"
-                "END_UNTRUSTED_COBOL\n"
-                f'Highlighted span (untrusted data): "{span}"'
-            ),
-        },
+        {"role": "user", "content": name_model_input(context, span)},
     ]
 
 
 def build_person_text_retry_messages(
     context: str,
     span: str,
-    source: str = "",
 ) -> list[dict[str, str]]:
     """Repeat one request after a copied person span could not be anchored.
 
@@ -378,7 +335,7 @@ def build_person_text_retry_messages(
     """
 
     return [
-        *build_messages(context, span, source),
+        *build_messages(context, span),
         {"role": "user", "content": PERSON_TEXT_RETRY_INSTRUCTION},
     ]
 
@@ -436,13 +393,16 @@ class NameJudge:
         self.prompt_version = JUDGE_PROMPT_VERSION
         self.timeout = timeout
         self.progress = progress
-        self._started_at = time.monotonic()
         self.decisions: list[dict[str, object]] = []
         # Plug-in boundary failures that happen before a Decision can be
         # constructed.  The CLI turns these into per-file NOT_COMPLETE rows.
         self.runtime_failures: list[dict[str, str]] = []
+        self.latency_s = 0.0
+        self.http_attempts = 0
+        self.canary_calls = 0
         self.calls = 0
         self.errors = 0
+        self.transport_error = ""
         # Counts the one narrow retry used when a model "corrects" copied
         # source spelling. It is separate from JSON/schema retries in llm.py.
         self.person_text_retries = 0
@@ -518,38 +478,6 @@ class NameJudge:
             )
         return True, ""
 
-    def write_decisions(self, path: Path) -> None:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        payload = {
-            "model": self.model,
-            "model_digest": self.model_digest,
-            "host": self.host,
-            "prompt_version": JUDGE_PROMPT_VERSION,
-            "llm_calls": self.calls,
-            "llm_errors": self.errors,
-            "runtime_seconds": round(time.monotonic() - self._started_at, 3),
-            "person_text_retries": self.person_text_retries,
-            "cache_hits": self.cache_hits,
-            "anonymize_whole": sum(
-                1 for row in self.decisions if row["decision"] == "anonymize_whole"
-            ),
-            "anonymize_and_review": sum(
-                1
-                for row in self.decisions
-                if row["decision"] == "anonymize_and_review"
-            ),
-            "anonymize_part": sum(
-                1 for row in self.decisions if row["decision"] == "anonymize_part"
-            ),
-            "leave_unchanged": sum(
-                1 for row in self.decisions if row["decision"] == "leave_unchanged"
-            ),
-            "review_required": sum(
-                1 for row in self.decisions if row["decision"] == "review_required"
-            ),
-            "decisions": self.decisions,
-        }
-        path.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
 
     def decide(
         self,
@@ -559,7 +487,7 @@ class NameJudge:
     ) -> tuple[Decision, bool]:
         """Return one validated semantic proposal and whether it was cached."""
 
-        messages = build_messages(snippet, finding.text, finding.source)
+        messages = build_messages(snippet, finding.text)
         key = response_cache_key(
             stage="judge", messages=messages, schema=JUDGE_RESPONSE_SCHEMA,
             options={"temperature": 0}, model_digest=self.model_digest,
@@ -578,6 +506,9 @@ class NameJudge:
                 True,
             )
 
+        if self.transport_error:
+            return error_decision(occurrence_id=occurrence_id, model_digest=self.model_digest,
+                                  error_message=self.transport_error), False
         result = call_ollama_json(
             self.host,
             self.model,
@@ -585,12 +516,15 @@ class NameJudge:
             JUDGE_RESPONSE_SCHEMA,
             timeout=self.timeout,
         )
+        self.latency_s += result.latency_s
+        self.http_attempts += 1 + int(result.retried)
         self.calls += 1
 
         # Fail-safe: anything that is not a clean answer becomes an error
         # Decision and is not cached, so a transient failure cannot poison
         # later decisions.
         if result.error:
+            self.transport_error = result.error
             self.errors += 1
             return (
                 error_decision(
@@ -631,13 +565,15 @@ class NameJudge:
                 build_person_text_retry_messages(
                     snippet,
                     finding.text,
-                    finding.source,
                 ),
                 JUDGE_RESPONSE_SCHEMA,
                 timeout=self.timeout,
             )
+            self.latency_s += retry.latency_s
+            self.http_attempts += 1 + int(retry.retried)
             self.calls += 1
             if retry.error:
+                self.transport_error = retry.error
                 self.errors += 1
                 return (
                     error_decision(
@@ -694,6 +630,7 @@ class NameJudge:
     def _ask(self, context: str) -> CanaryAnswer:
         """Run one startup probe without conflating failure categories."""
 
+        self.canary_calls += 1
         span = context.split("[[", 1)[1].split("]]", 1)[0]
         result = call_ollama_json(
             self.host,
@@ -702,6 +639,8 @@ class NameJudge:
             JUDGE_RESPONSE_SCHEMA,
             timeout=self.timeout,
         )
+        self.latency_s += result.latency_s
+        self.http_attempts += 1 + int(result.retried)
         if result.error:
             return CanaryAnswer("transport", detail=result.error)
         if not result.schema_ok:

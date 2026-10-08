@@ -23,7 +23,7 @@ def response_cache_key(
     """Hash the complete effective request and immutable model contents."""
     payload = json.dumps(
         {"stage": stage, "messages": messages, "schema": schema,
-         "options": options, "model_digest": model_digest},
+         "options": options, "model_digest": model_digest, "think": False, "stream": False},
         sort_keys=True, separators=(",", ":"), ensure_ascii=False,
     )
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
@@ -41,6 +41,7 @@ class PersistentResponseCache:
         self.stage = stage
         self.path = report_dir / "llm_cache" / f"{stage}.json" if report_dir is not None else None
         self.entries: dict[str, dict[str, Any]] = {}
+        self._dirty = False
         self._load()
 
     def get(self, key: str) -> dict[str, Any] | None:
@@ -48,8 +49,10 @@ class PersistentResponseCache:
         return dict(value) if value is not None else None
 
     def put(self, key: str, payload: dict[str, Any]) -> None:
+        if self.entries.get(key) == payload:
+            return
         self.entries[key] = dict(payload)
-        self._write()
+        self._dirty = True
 
     def _load(self) -> None:
         if self.path is None or not self.path.is_file():
@@ -57,7 +60,8 @@ class PersistentResponseCache:
         try:
             payload = json.loads(self.path.read_text(encoding="utf-8"))
             if (
-                payload.get("stage") != self.stage
+                not isinstance(payload, dict)
+                or payload.get("stage") != self.stage
                 or not isinstance(payload.get("entries"), dict)
             ):
                 return
@@ -71,8 +75,12 @@ class PersistentResponseCache:
             # block the privacy pipeline or make an answer look validated.
             self.entries = {}
 
-    def _write(self) -> None:
+    def flush(self) -> None:
+        """Persist validated answers at the end of a source file."""
+        if not self._dirty:
+            return
         if self.path is None:
+            self._dirty = False
             return
         self.path.parent.mkdir(parents=True, exist_ok=True)
         payload = {
@@ -88,6 +96,7 @@ class PersistentResponseCache:
             with os.fdopen(file_descriptor, "w", encoding="utf-8") as temporary:
                 json.dump(payload, temporary, ensure_ascii=False, sort_keys=True)
             os.replace(temporary_name, self.path)
+            self._dirty = False
         except OSError:
             try:
                 os.unlink(temporary_name)
