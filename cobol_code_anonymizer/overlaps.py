@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass, replace
 import re
+from bisect import bisect_left
+from .text_matching import logical_bounds
 from typing import Generic, Iterable, Protocol, TypeVar
 
 
@@ -30,33 +32,12 @@ ENTITY_PRIORITY = {
 }
 
 
-@dataclass(frozen=True)
-class OverlapGroup(Generic[FindingT]):
-    """One same-file connected component of half-open finding spans."""
-
-    file: str
-    start: int
-    end: int
-    members: tuple[FindingT, ...]
-
-    def __post_init__(self) -> None:
-        if not self.members:
-            raise ValueError("overlap group must contain at least one finding")
-        if self.start < 0 or self.end <= self.start:
-            raise ValueError("overlap group span must be non-empty and ordered")
-        if any(member.file != self.file for member in self.members):
-            raise ValueError("overlap group members must belong to one file")
-        if min(member.start for member in self.members) != self.start:
-            raise ValueError("overlap group start does not cover its members")
-        if max(member.end for member in self.members) != self.end:
-            raise ValueError("overlap group end does not cover its members")
 
 
 @dataclass(frozen=True)
 class OverlapResolution(Generic[FindingT]):
     """All preserved groups plus the temporary legacy-compatible selection."""
 
-    groups: tuple[OverlapGroup[FindingT], ...]
     selected: tuple[FindingT, ...]
 
 
@@ -71,42 +52,6 @@ def finding_order(item: SpanFinding) -> tuple[object, ...]:
     )
 
 
-def build_overlap_groups(findings: Iterable[FindingT]) -> tuple[OverlapGroup[FindingT], ...]:
-    """Return same-file transitive overlap groups without dropping members.
-
-    Half-open spans overlap only when they share a source character. Adjacent
-    spans therefore remain separate groups.
-    """
-
-    ordered = sorted(findings, key=finding_order)
-    groups: list[OverlapGroup[FindingT]] = []
-    members: list[FindingT] = []
-    current_file = ""
-    group_start = 0
-    group_end = 0
-
-    for finding in ordered:
-        joins_group = (
-            bool(members)
-            and finding.file == current_file
-            and finding.start < group_end
-        )
-        if not joins_group:
-            if members:
-                groups.append(
-                    OverlapGroup(current_file, group_start, group_end, tuple(members))
-                )
-            members = [finding]
-            current_file = finding.file
-            group_start = finding.start
-            group_end = finding.end
-            continue
-        members.append(finding)
-        group_end = max(group_end, finding.end)
-
-    if members:
-        groups.append(OverlapGroup(current_file, group_start, group_end, tuple(members)))
-    return tuple(groups)
 
 
 def select_legacy_findings(findings: Iterable[FindingT]) -> tuple[FindingT, ...]:
@@ -116,11 +61,17 @@ def select_legacy_findings(findings: Iterable[FindingT]) -> tuple[FindingT, ...]
         item.file, item.start,
     ))
     kept: list[FindingT] = []
+    by_file = {}
     for finding in ordered:
-        overlaps = [item for item in kept if item.file == finding.file
-                    and item.start < finding.end and finding.start < item.end]
+        starts, file_kept = by_file.setdefault(finding.file, ([], []))
+        index = bisect_left(starts, finding.start)
+        limit = bisect_left(starts, finding.end)
+        overlaps = [item for item in file_kept[max(0, index - 1):limit]
+                    if item.start < finding.end and finding.start < item.end]
         if not overlaps:
             kept.append(finding)
+            starts.insert(index, finding.start)
+            file_kept.insert(index, finding)
             continue
         for word in re.finditer(r"\w+(?:(?:''|'|’)[^\W_]+)*", finding.text):
             start, end = finding.start + word.start(), finding.start + word.end()
@@ -132,9 +83,19 @@ def select_legacy_findings(findings: Iterable[FindingT]) -> tuple[FindingT, ...]
             marker = "[[" + finding.text + "]]"
             marked_word = finding.text[:word.start()] + "[[" + word.group() + "]]" + finding.text[word.end():]
             context = finding.context.replace(marker, marked_word, 1)
-            kept.append(replace(finding, text=word.group(), start=start, end=end,
+            fragment = replace(finding, text=word.group(), start=start, end=end,
                                 line=line, column=column, context=context,
-                                logical_context="", logical_candidate=""))
+                                logical_start=finding.logical_start + word.start(),
+                                logical_end=finding.logical_start + word.end(), logical_candidate=word.group())
+            if finding.logical:
+                local_start, local_end = logical_bounds(finding.logical, ((start, end),))
+                logical = finding.logical.text
+                fragment = replace(fragment, logical_start=local_start, logical_end=local_end,
+                                   logical_context=logical[:local_start] + "[[" + logical[local_start:local_end] + "]]" + logical[local_end:])
+            kept.append(fragment)
+            index = bisect_left(starts, start)
+            starts.insert(index, start)
+            file_kept.insert(index, fragment)
     return tuple(sorted(kept, key=lambda item: (item.file, item.start, item.end)))
 
 
@@ -143,6 +104,5 @@ def resolve_overlaps(findings: Iterable[FindingT]) -> OverlapResolution[FindingT
 
     materialized = tuple(findings)
     return OverlapResolution(
-        groups=build_overlap_groups(materialized),
         selected=select_legacy_findings(materialized),
     )

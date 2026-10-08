@@ -11,16 +11,9 @@ They do not decide that anything is a name and never widen a replacement.
 
 from __future__ import annotations
 
-import re
 from dataclasses import dataclass
 
 from .cobol_layout import COMMENT, LITERAL, TEXT, SourceLayout, SourceRegion
-from .source_reader import split_source_lines
-
-
-_IDENTIFICATION_PERSON_TEXT_RE = re.compile(
-    r"^\s*(?:AUTHOR|REMARKS)\b", re.IGNORECASE
-)
 
 
 @dataclass(frozen=True)
@@ -39,6 +32,7 @@ class LogicalText:
 
     text: str
     pieces: tuple[LogicalPiece, ...]
+    kind: str = TEXT
 
     def source_spans(self, logical_start: int, logical_end: int) -> tuple[tuple[int, int], ...]:
         """Map one logical half-open span to its physical source fragments.
@@ -70,7 +64,6 @@ def extraction_texts(layout: SourceLayout) -> tuple[LogicalText, ...]:
 
     records: list[LogicalText] = []
     records.extend(_single_region_text(layout, region) for region in layout.regions_of_kind(COMMENT, TEXT))
-    records.extend(_author_and_remarks_texts(layout))
     records.extend(literal_texts(layout))
     return tuple(record for record in records if record.text.strip())
 
@@ -100,49 +93,13 @@ def literal_texts(layout: SourceLayout) -> tuple[LogicalText, ...]:
 
 
 def _single_region_text(layout: SourceLayout, region: SourceRegion) -> LogicalText:
-    text = layout.text_for(region)
+    start = region.decoded_start
+    text = layout.source.text[start:region.decoded_end]
     return LogicalText(
         text=text,
-        pieces=(LogicalPiece(0, len(text), region.decoded_start, region.decoded_end),),
+        pieces=(LogicalPiece(0, len(text), start, region.decoded_end),),
+        kind=region.kind,
     )
-
-
-def _author_and_remarks_texts(layout: SourceLayout) -> tuple[LogicalText, ...]:
-    """Return full AUTHOR/REMARKS lines without adding special layout kinds."""
-
-    text = layout.source.text
-    records: list[LogicalText] = []
-    offset = 0
-    for line in split_source_lines(text, keepends=True):
-        content = line.rstrip("\r\n")
-        # In fixed source columns 1--7 are sequence/indicator.  Try both the
-        # code area and the full line so free COBOL remains straightforward.
-        code_area = content[7:] if len(content) >= 7 else content
-        if _IDENTIFICATION_PERSON_TEXT_RE.match(code_area):
-            record_start = offset + 7
-            record_text = code_area
-        elif _IDENTIFICATION_PERSON_TEXT_RE.match(content):
-            record_start = offset
-            record_text = content
-        else:
-            record_start = 0
-            record_text = ""
-        if record_text:
-            records.append(
-                LogicalText(
-                    text=record_text,
-                    pieces=(
-                        LogicalPiece(
-                            0,
-                            len(record_text),
-                            record_start,
-                            record_start + len(record_text),
-                        ),
-                    ),
-                )
-            )
-        offset += len(line)
-    return tuple(records)
 
 
 def _literal_record(layout: SourceLayout, regions: list[SourceRegion]) -> LogicalText:
@@ -158,7 +115,7 @@ def _literal_record(layout: SourceLayout, regions: list[SourceRegion]) -> Logica
         fragments.append(value)
         pieces.append(LogicalPiece(logical_offset, logical_offset + len(value), start, end))
         logical_offset += len(value)
-    return LogicalText("".join(fragments), tuple(pieces))
+    return LogicalText("".join(fragments), tuple(pieces), LITERAL)
 
 
 def _literal_payload_span(source: str, region: SourceRegion) -> tuple[int, int]:

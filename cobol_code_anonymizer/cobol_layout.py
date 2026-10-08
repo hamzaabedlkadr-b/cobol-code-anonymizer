@@ -13,6 +13,7 @@ continued literal correctly, but it is intentionally not a COBOL/JCL parser.
 
 from __future__ import annotations
 
+from functools import cached_property
 from dataclasses import dataclass
 from pathlib import Path
 import re
@@ -103,6 +104,10 @@ class SourceLayout:
             expected_start = region.decoded_end
         if expected_start != len(self.source.text):
             raise ValueError("regions must cover the complete decoded source")
+
+    @cached_property
+    def region_starts(self) -> tuple[int, ...]:
+        return tuple(region.decoded_start for region in self.regions)
 
     @property
     def detector_text(self) -> str:
@@ -247,17 +252,37 @@ def _classify_text(source: DecodedSource, lines: tuple[_Line, ...]) -> list[Sour
     return builder.regions
 
 
+def _identification_text(content: str, in_identification: bool, in_text: bool):
+    """Locate comment-entry payloads, ending at the next header or division."""
+    division = re.match(r"\s*([A-Z-]+)\s+DIVISION\b", content, re.IGNORECASE)
+    if division:
+        return division.group(1).upper() in {"ID", "IDENTIFICATION"}, False, None
+    if not in_identification:
+        return False, False, None
+    header = re.match(
+        r"\s*(AUTHOR|INSTALLATION|DATE-WRITTEN|DATE-COMPILED|SECURITY|REMARKS)\s*\.",
+        content, re.IGNORECASE,
+    )
+    if header:
+        return True, True, header.end()
+    if re.match(r"\s*(?:PROGRAM-ID|FUNCTION-ID|CLASS-ID|METHOD-ID|INTERFACE-ID|FACTORY|OBJECT)\s*\.", content, re.IGNORECASE):
+        return True, False, None
+    return True, in_text, 0 if in_text else None
+
+
 def _classify_fixed(source: DecodedSource, lines: tuple[_Line, ...]) -> list[SourceRegion]:
     """Classify fixed source while retaining all column areas as code."""
 
     builder = _Builder(source)
     open_quote: str | None = None
+    in_identification, in_text = True, False
 
     for line in lines:
         content = source.text[line.start : line.content_end]
         indicator = content[6:7] if len(content) >= 7 else ""
         if indicator in {"*", "/"}:
-            builder.add(COMMENT, line.start, line.content_end, line)
+            builder.add(CODE, line.start, line.start + 6, line)
+            builder.add(COMMENT, line.start + 6, line.content_end, line)
             open_quote = None
             builder.line_ending(line)
             continue
@@ -265,6 +290,15 @@ def _classify_fixed(source: DecodedSource, lines: tuple[_Line, ...]) -> list[Sou
         code_start = min(line.start + 7, line.content_end)
         code_end = min(line.start + 72, line.content_end)
         builder.add(CODE, line.start, code_start, line)
+        in_identification, in_text, payload = _identification_text(
+            source.text[code_start:code_end], in_identification, in_text)
+        if payload is not None:
+            builder.add(CODE, code_start, code_start + payload, line)
+            builder.add(TEXT, code_start + payload, code_end, line)
+            builder.add(CODE, code_end, line.content_end, line)
+            builder.line_ending(line)
+            open_quote = None
+            continue
         carried_quote = open_quote if indicator == "-" else None
         open_quote = _add_quoted_segments(
             builder,
@@ -282,20 +316,22 @@ def _classify_fixed(source: DecodedSource, lines: tuple[_Line, ...]) -> list[Sou
 
 def _classify_free(source: DecodedSource, lines: tuple[_Line, ...]) -> list[SourceRegion]:
     builder = _Builder(source)
+    in_identification, in_text = True, False
     for line in lines:
         content = source.text[line.start : line.content_end]
         if re.match(r"^\s*\*>", content):
             builder.add(COMMENT, line.start, line.content_end, line)
         else:
-            _add_quoted_segments(
-                builder,
-                line,
-                line.start,
-                line.content_end,
-                None,
-                fixed_continuation=False,
-                allow_inline_comment=True,
-            )
+            in_identification, in_text, payload = _identification_text(
+                content, in_identification, in_text)
+            if payload is not None:
+                builder.add(CODE, line.start, line.start + payload, line)
+                builder.add(TEXT, line.start + payload, line.content_end, line)
+            else:
+                _add_quoted_segments(
+                    builder, line, line.start, line.content_end, None,
+                    fixed_continuation=False, allow_inline_comment=True)
+
         builder.line_ending(line)
     return builder.regions
 

@@ -23,6 +23,7 @@ later connected to production scanning.
 from __future__ import annotations
 
 from bisect import bisect_right
+from functools import lru_cache
 import hashlib
 import re
 import string
@@ -712,3 +713,9 @@ def _is_excluded_c0(byte: int) -> bool:
     """Match the C0 byte ranges excluded by the decoding policy."""
 
     return byte <= 0x08 or byte == 0x0B or 0x0E <= byte <= 0x1F
+
+
+@lru_cache(maxsize=8)
+def source_line_starts(text: str) -> tuple[int, ...]:
+    """Decoded positions after each supported line ending."""
+    return (0, *(match.end() for match in _SOURCE_LINE_BREAK_RE.finditer(text)))

@@ -11,12 +11,40 @@ the audited model answer or the source offsets used for replacement.
 from __future__ import annotations
 
 import re
+import hashlib
+import json
+import unicodedata
+from bisect import bisect_right
+from dataclasses import replace
+from .source_reader import source_line_starts
+
+
+def name_model_input(context: str, span: str) -> str:
+    """Give both models the same marked source text and span."""
+    return (
+        "BEGIN_UNTRUSTED_COBOL\n"
+        f"{context}\n"
+        "END_UNTRUSTED_COBOL\n"
+        f'Highlighted span (untrusted data): "{span}"'
+    )
+
+
+def name_word_spans(value: str) -> list[tuple[int, int]]:
+    """Split name text into whole words, keeping apostrophes and hyphens."""
+    return [(match.start(), match.end()) for match in
+            re.finditer(r"[^\W\d_]+(?:['’\-]+[^\W\d_]+)*", value)]
 
 
 def span_is_code(layout, start: int, end: int) -> bool:
     """Return whether a candidate touches a code region of the source layout."""
-    return any(region.kind == "code" and start < region.decoded_end and region.decoded_start < end
-               for region in layout.regions)
+    index = max(0, bisect_right(layout.region_starts, start) - 1)
+    for index in range(index, len(layout.regions)):
+        region = layout.regions[index]
+        if region.decoded_start >= end:
+            break
+        if region.kind == "code" and start < region.decoded_end:
+            return True
+    return False
 
 
 def normalize_evidence_text(value: str) -> str:
@@ -147,6 +175,8 @@ def equivalent_person_occurrences(
 
 
 _PERSON_WORD_RE = re.compile(r"[^\W_]+(?:(?:''|'|’)[^\W_]+)*", re.UNICODE)
+WATCHLIST_TOKEN_RE = _PERSON_WORD_RE
+IDENTIFIER_PART_RE = re.compile(r"[^\W\d_]+(?:(?:''|'|’)[^\W\d_]+)*", re.UNICODE)
 
 def _word_matches_with_tolerance(source_word: str, copied_word: str) -> bool:
     """Compare one copied word without accepting short-word guesses."""
@@ -186,7 +216,7 @@ def tolerant_person_occurrences(line: str, person_text: str) -> list[tuple[int, 
 def output_span_to_source(start: int, end: int, replaced_spans: list[tuple[int, int, int]]) -> tuple[int, int] | None:
     """Map an unchanged output span back to source; reject replacement interiors."""
     shift = 0
-    for source_start, source_end, length in sorted(replaced_spans):
+    for source_start, source_end, length in replaced_spans:
         output_start = source_start + shift
         output_end = output_start + length
         if start < output_end and output_start < end:
@@ -195,3 +225,88 @@ def output_span_to_source(start: int, end: int, replaced_spans: list[tuple[int, 
             break
         shift += length - (source_end - source_start)
     return start - shift, end - shift
+
+
+def marked_source_line(text: str, start: int, end: int) -> str:
+    """Mark a decoded source span with the reader's physical line bounds."""
+    left, _ = source_line_bounds(text, start)
+    _, right = source_line_bounds(text, max(start, end - 1))
+    return f"{text[left:start]}[[{text[start:end]}]]{text[end:right]}"
+
+
+def line_column(text: str, offset: int) -> tuple[int, int]:
+    starts = source_line_starts(text)
+    index = bisect_right(starts, offset) - 1
+    return index + 1, offset - starts[index] + 1
+
+
+def source_line_bounds(text: str, offset: int) -> tuple[int, int]:
+    starts = source_line_starts(text)
+    index = bisect_right(starts, offset) - 1
+    end = starts[index + 1] if index + 1 < len(starts) else len(text)
+    while end > starts[index] and text[end - 1] in "\r\n":
+        end -= 1
+    return starts[index], end
+
+
+def source_occurrence_id(finding, sha: str) -> str:
+    spans = finding.logical.source_spans(finding.logical_start, finding.logical_end) if finding.logical else ((finding.start, finding.end),)
+    return hashlib.sha256(json.dumps([finding.file, sha, spans]).encode()).hexdigest()
+
+
+def source_findings(finding, logical, layout):
+    """Map a logical detection and its review key to physical source pieces."""
+    source = layout.source.text
+    word = logical.text[finding.start:finding.end]
+    marked = logical.text[:finding.start] + "[[" + word + "]]" + logical.text[finding.end:]
+    lines = dict.fromkeys(source_line_bounds(source, piece.source_start) for piece in logical.pieces)
+    review_line = "\n".join(source[a + (6 if layout.format == "fixed_cobol" else 0):b] for a, b in lines)
+    key = review_key(logical.kind, review_line)
+    for start, end in logical.source_spans(finding.start, finding.end):
+        while start < end and source[start].isspace():
+            start += 1
+        while start < end and source[end - 1].isspace():
+            end -= 1
+        if start == end:
+            continue
+        line, column = line_column(source, start)
+        yield replace(finding, text=source[start:end], start=start, end=end, line=line, column=column,
+                      context=marked_source_line(source, start, end), logical=logical,
+                      logical_start=finding.start, logical_end=finding.end,
+                      logical_context=marked, logical_candidate=word, review_line=review_line, review_key=key)
+
+
+def physical_replacement(finding, alias: str) -> str:
+    """Write a joined name once, then remove its remaining source pieces."""
+    if finding.logical:
+        spans = finding.logical.source_spans(finding.logical_start, finding.logical_end)
+        if spans and finding.start > spans[0][0]:
+            return ""
+    return alias
+
+
+def fold_watchlist_value(value: str) -> str:
+    decomposed = unicodedata.normalize("NFKD", value.replace("''", "'").replace("’", "'")).upper().translate(str.maketrans("015", "OIS"))
+    return "".join(char for char in decomposed if not unicodedata.combining(char))
+
+
+def prepare_watchlist(values):
+    """Build token lookups once; pair words need at least three letters."""
+    entries = {fold_watchlist_value(word): word for word in values if _PERSON_WORD_RE.fullmatch(word)}
+    pairs = {key for key, word in entries.items() if sum(char.isalpha() for char in word) >= 3}
+    return entries, pairs
+
+
+def logical_bounds(logical, source_spans):
+    """Map source fragments back into their owning logical record."""
+    bounds = []
+    for start, end in source_spans:
+        piece = next((piece for piece in logical.pieces if piece.source_start <= start < end <= piece.source_end), None)
+        if piece is None:
+            return None
+        bounds.append((piece.logical_start + start - piece.source_start, piece.logical_start + end - piece.source_start))
+    return (bounds[0][0], bounds[-1][1]) if bounds else None
+
+
+def review_key(kind: str, line: str) -> str:
+    return hashlib.sha256(json.dumps([kind, line], ensure_ascii=False).encode()).hexdigest()
