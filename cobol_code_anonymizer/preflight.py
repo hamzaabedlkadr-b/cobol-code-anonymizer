@@ -1,16 +1,12 @@
-"""Deterministic candidate-density measurement for a source batch.
-
-Preflight deliberately stops before replacement, judging, extraction, or any
-Ollama setup.  It uses the same source reader, watchlist matcher, and optional
-spaCy detector as a normal scan, but emits only aggregate counts so the report
-can be shared without exposing names or source text.
-"""
+"""Measure candidate density and write local watchlist examples without models."""
 
 from __future__ import annotations
 
+import csv
 from collections import Counter
 from dataclasses import dataclass, field
 import time
+import re
 import unicodedata
 from pathlib import Path
 from typing import Iterable
@@ -27,7 +23,12 @@ from .scanner import (
     read_text,
     relative_name,
     scan_text,
+    fold_watchlist_value,
 )
+from .extractor import build_extraction_records, chunk_records
+from .policy import apply_name_policy, NAME_POLICY_TABLE
+from .review_decisions import source_line
+from .text_matching import prepare_watchlist, span_is_code, name_word_spans, IDENTIFIER_PART_RE
 from .source_reader import (
     SourceDecodingError,
     UnsupportedSourceEncodingError,
@@ -57,6 +58,10 @@ def _normalise_word(value: str) -> str:
 class PreflightCounts:
     files_scanned: int = 0
     files_skipped: int = 0
+    files_failed: int = 0
+    code_hidden: int = 0
+    code_shown: int = 0
+    path_hidden: int = 0
     lines_total: int = 0
     lines_comment: int = 0
     lines_literal: int = 0
@@ -64,17 +69,22 @@ class PreflightCounts:
     watchlist_single: int = 0
     watchlist_pair: int = 0
     spacy: int = 0
-    case_shape: int = 0
     candidate_lines: set[tuple[str, int]] = field(default_factory=set)
     watchlist_entry_counts: Counter[int] = field(default_factory=Counter)
     short_entries: int = 0
     duplicate_entries: int = 0
     keyword_entries: int = 0
     runtime_seconds: float = 0.0
+    frequent_words: Counter[str] = field(default_factory=Counter)
+    examples: dict[str, list[str]] = field(default_factory=dict)
+    approved_lines: set[tuple[str, str]] = field(default_factory=set)
+    other_lines: set[tuple[str, str]] = field(default_factory=set)
+    extractor_chunks: int = 0
+    verifier_enabled: bool = True
 
     @property
     def judge_calls(self) -> int:
-        return len(self.candidate_lines)
+        return len(self.approved_lines) + len(self.other_lines)
 
     @property
     def lines_per_thousand(self) -> float:
@@ -87,6 +97,9 @@ class PreflightCounts:
         lines = [
             f"files_scanned={self.files_scanned}",
             f"files_skipped={self.files_skipped}",
+            f"files_failed={self.files_failed}",
+            f"code_parts_hidden={self.code_hidden}", f"code_parts_shown={self.code_shown}",
+            f"path_parts_hidden={self.path_hidden}",
             f"lines_total={self.lines_total}",
             f"lines_comment={self.lines_comment}",
             f"lines_literal={self.lines_literal}",
@@ -96,7 +109,6 @@ class PreflightCounts:
             f"watchlist_pair={self.watchlist_pair} "
             f"per_1000={self.rate(self.watchlist_pair):.3f}",
             f"spacy={self.spacy} per_1000={self.rate(self.spacy):.3f}",
-            f"case_shape={self.case_shape} per_1000={self.rate(self.case_shape):.3f}",
             f"distinct_candidate_lines={len(self.candidate_lines)}",
             "top_watchlist_entries=",
         ]
@@ -108,7 +120,10 @@ class PreflightCounts:
                 f"watchlist_duplicate_entries_case_insensitive={self.duplicate_entries}",
                 f"watchlist_cobol_keyword_entries={self.keyword_entries}",
                 f"estimated_judge_calls={self.judge_calls}",
-                f"estimated_verifier_calls={self.judge_calls}",
+                f"estimated_verifier_calls_upper_bound={len(self.approved_lines) if self.verifier_enabled else 0}",
+                f"estimated_extractor_calls={self.extractor_chunks}",
+                "new_extractor_candidates_not_in_judge_estimate=true",
+                "estimates_are_distinct_requests_before_cache_startup_and_retries=true",
                 f"runtime_seconds={self.runtime_seconds:.3f}",
             ]
         )
@@ -169,18 +184,28 @@ def run_preflight(
     use_presidio: bool,
     presidio_model: str,
     skip_roots: list[Path] | None = None,
-    case_shape_enabled: bool = True,
+    approved_words: frozenset[str] = frozenset(),
+    verifier_enabled: bool = True,
+    chunk_lines: int = 25,
+    judge_enabled: bool = True,
+    extractor_enabled: bool = True,
 ) -> PreflightCounts:
     started = time.perf_counter()
-    counts = PreflightCounts()
+    counts = PreflightCounts(verifier_enabled=verifier_enabled)
     entries = watchlist_entries(watchlist_paths, include_default_names)
     counts.short_entries, counts.duplicate_entries, counts.keyword_entries = validate_watchlist(entries)
     entry_ids_by_value: dict[str, list[int]] = {}
     for entry_id, value in entries:
         entry_ids_by_value.setdefault(_normalise_word(value), []).append(entry_id)
     all_names = load_names(watchlist_paths, include_default=include_default_names)
-    name_regex = compile_name_regex(all_names)
+    entries_lookup, pair_words = prepare_watchlist(all_names)
+    name_regex = compile_name_regex([word for word in all_names if fold_watchlist_value(word) not in entries_lookup])
     analyzer = build_presidio_analyzer(presidio_model, []) if use_presidio else None
+    if use_presidio and analyzer is None:
+        raise RuntimeError("spaCy/Presidio is unavailable; use --no-presidio to disable it")
+    print("Active preflight detectors: watchlist, pairs"
+          + (f", spaCy ({presidio_model})" if analyzer is not None else "")
+          , flush=True)
     excluded = {path.resolve() for path in watchlist_paths}
     text_files = [
         path
@@ -190,13 +215,17 @@ def run_preflight(
     all_files = iter_all_files(input_path, skip_root=skip_roots)
     counts.files_skipped = max(0, len(all_files) - len(text_files))
 
-    for path in text_files:
+    extraction_requests = set()
+    watchlist_words = frozenset(fold_watchlist_value(word) for word in all_names)
+    path_words = watchlist_words - approved_words
+    for index, path in enumerate(text_files, start=1):
         relative = relative_name(path, input_path)
+        print(f"Preflight file {index} of {len(text_files)}: {relative}", flush=True)
         try:
             source = read_source(path)
             layout = classify_source(source, source_path=path)
         except (SourceDecodingError, UnsupportedSourceEncodingError, OSError):
-            counts.files_skipped += 1
+            counts.files_failed += 1
             continue
         counts.files_scanned += 1
         total, comments, literals, code = _line_kind_counts(layout, source.text)
@@ -205,47 +234,69 @@ def run_preflight(
         counts.lines_literal += literals
         counts.lines_code += code
 
-        findings = scan_text(
-            source.text,
-            relative,
-            {"NAME"},
-            name_regex,
-            None,
-            set(),
-            False,
-            4,
-            name_scope,
-            presidio_analyzer=analyzer,
-            case_shape_enabled=case_shape_enabled,
-        )
-        pairs = find_watchlist_pair_spans(source.text, all_names)
-        pair_finding_ids: set[int] = set()
-        for index, finding in enumerate(findings):
-            source_is_watchlist = finding.source in {"watchlist", "employee_roster"}
-            source_is_spacy = finding.source == "presidio_spacy"
-            source_is_case_shape = finding.source == "case_shape"
-            overlaps_pair = any(
-                finding.start < end and start < finding.end for start, end in pairs
-            )
-            if source_is_watchlist and overlaps_pair:
-                pair_finding_ids.add(index)
-            elif source_is_watchlist:
+        try:
+            findings = scan_text(source.text, relative, {"NAME"}, name_regex, None, set(), name_scope,
+                                 presidio_analyzer=analyzer, layout=layout, watchlist_pair_values=entries_lookup, pair_words=pair_words)
+        except RuntimeError:
+            counts.files_failed += 1
+            counts.files_scanned -= 1
+            continue
+        if extractor_enabled:
+            records = build_extraction_records(source.text, name_scope, layout=layout)
+            extraction_requests.update(tuple(record.text for record in chunk) for chunk in chunk_records(records, chunk_lines))
+        counts.path_hidden += sum(fold_watchlist_value(match.group()) in path_words
+                                 for match in IDENTIFIER_PART_RE.finditer(relative))
+        for finding in findings:
+            is_pair = finding.source == "watchlist_pair"
+            is_watchlist = finding.source in {"watchlist", "employee_roster", "watchlist_pair"}
+            if is_pair:
+                counts.watchlist_pair += 1
+            elif is_watchlist:
                 counts.watchlist_single += 1
-                normalized = _normalise_word(finding.text)
-                for entry_id in entry_ids_by_value.get(normalized, []):
-                    counts.watchlist_entry_counts[entry_id] += 1
-            elif source_is_spacy:
+            elif finding.source == "presidio_spacy":
                 counts.spacy += 1
-            elif source_is_case_shape:
-                counts.case_shape += 1
-            if (source_is_watchlist or source_is_spacy or source_is_case_shape) and not overlaps_pair:
-                counts.candidate_lines.add((relative, finding.line))
-        counts.watchlist_pair += len(pairs)
-        for index in pair_finding_ids:
-            finding = findings[index]
-            normalized = _normalise_word(finding.text)
-            for entry_id in entry_ids_by_value.get(normalized, []):
-                counts.watchlist_entry_counts[entry_id] += 1
+            line = source_line(finding.context, finding.text)
+            if is_watchlist:
+                words = [finding.text[a:b] for a, b in name_word_spans(finding.text)] if is_pair else [finding.text]
+                for word in words:
+                    normalized = _normalise_word(word)
+                    for entry_id in entry_ids_by_value.get(normalized, []):
+                        counts.watchlist_entry_counts[entry_id] += 1
+                    word = fold_watchlist_value(word)
+                    counts.frequent_words[word] += 1
+                    examples = counts.examples.setdefault(word, [])
+                    if line not in examples and len(examples) < 3:
+                        examples.append(line)
+            context = finding.logical_context or finding.context
+            word = fold_watchlist_value(finding.logical_candidate or finding.text)
+            code = span_is_code(layout, finding.start, finding.end)
+            if code:
+                counts.code_shown += word in approved_words
+                counts.code_hidden += word not in approved_words
+                continue
+            counts.candidate_lines.add((relative, finding.line))
+            if not judge_enabled:
+                continue
+            gate = apply_name_policy(occurrence_id="0" * 64, model_context=context, judge_decision=None,
+                                     code_sensitive_identifier=False, watchlist_pair=is_pair,
+                                     watchlist_single=is_watchlist or word in watchlist_words,
+                                     approved_word=word in approved_words)
+            if gate.reading != NAME_POLICY_TABLE["no_judge"][1]:
+                continue
+            key = (word, context)
+            (counts.approved_lines if word in watchlist_words else counts.other_lines).add(key)
+
+    counts.extractor_chunks = len(extraction_requests)
 
     counts.runtime_seconds = time.perf_counter() - started
     return counts
+
+
+def write_frequent_words(path: Path, counts: PreflightCounts) -> None:
+    """Write the local word counts and at most three source examples."""
+    with path.open("w", newline="", encoding="utf-8") as handle:
+        writer = csv.writer(handle)
+        writer.writerow(("word", "count", "example_1", "example_2", "example_3"))
+        for word, count in sorted(counts.frequent_words.items(), key=lambda item: (-item[1], item[0]))[:100]:
+            examples = counts.examples[word]
+            writer.writerow([word, count, *examples, *[""] * (3 - len(examples))])

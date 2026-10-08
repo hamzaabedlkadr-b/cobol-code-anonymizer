@@ -1,118 +1,55 @@
-"""Write the small local queue used for human correction reviews.
-
-Each block is grouped only by the folded candidate word. Context words are not
-part of the key: in COBOL they commonly contain sequence-area fragments or
-verbs such as ``MOVE`` and ``DISPLAY``, which made one review issue look like
-many unrelated ones.
-"""
+"""Write required and optional reviews as distinct word-and-line decisions."""
 
 from __future__ import annotations
 
 import csv
-from collections import defaultdict
 from collections.abc import Iterable, Mapping
 from pathlib import Path
 
 from .review_decisions import folded_word, source_line
+from .text_matching import name_word_spans, IDENTIFIER_PART_RE
 
-QUEUED_OUTCOMES = {"anonymize_and_review", "review_required"}
 
-
-def write_review_queue_csv(
-    path: Path,
-    decisions: Iterable[Mapping[str, object]],
-) -> int:
-    """Write one complete, largest-first review block for each candidate word.
-
-    ``line_texts`` contains every queued physical line, without fixed-format
-    sequence/indicator columns or ``[[...]]`` markers. It is deliberately a
-    newline-separated CSV cell so a reviewer can inspect all variants without
-    a context-derived grouping rule hiding repetitions.
-    """
-
-    groups: dict[str, list[dict[str, str]]] = defaultdict(list)
+def write_review_queue_csv(path: Path, decisions: Iterable[Mapping[str, object]]) -> tuple[int, int]:
+    """Write required items first; copied lines need only one answer."""
+    groups = {}
     for decision in decisions:
-        outcome = str(decision.get("policy_outcome") or decision.get("decision") or "")
-        if outcome not in QUEUED_OUTCOMES:
+        if decision.get("review_answer"):
             continue
-        candidate = str(decision.get("text") or "").strip()
+        outcome = decision.get("policy_outcome")
+        if decision.get("entity_type", "NAME") != "NAME" or outcome not in {"anonymize_whole", "review_required"}:
+            continue
+        candidate = str(decision.get("logical_candidate") or decision.get("text") or "")
         context = str(decision.get("context") or "")
-        if not candidate or not context:
-            continue
-        line = source_line(context, candidate)
-        key = folded_word(candidate)
-        groups[key].append(
-            {
-                "candidate": candidate,
-                "outcome": outcome,
-                "reason": str(decision.get("policy_reading") or ""),
-                "occurrence_id": str(
-                    (decision.get("policy_decision") or {}).get("occurrence_id", "")
-                    if isinstance(decision.get("policy_decision"), Mapping)
-                    else ""
-                ),
-                "location": _location(decision),
-                "line_text": line,
-            }
-        )
-
+        line = str(decision.get("review_line") or source_line(context, candidate))
+        for start, end in name_word_spans(candidate):
+            word = candidate[start:end]
+            key = (folded_word(word), decision.get("review_key") or line)
+            required = outcome == "review_required"
+            display = line
+            matches = [match for match in IDENTIFIER_PART_RE.finditer(line) if folded_word(match.group()) == folded_word(word)]
+            for match in reversed(matches):
+                display = display[:match.start()] + "[[" + display[match.start():match.end()] + "]]" + display[match.end():]
+            if not matches and decision.get("logical_context"):
+                joined = str(decision["logical_context"]).replace("[[", "").replace("]]", "")
+                position = joined.find(word)
+                if position >= 0:
+                    display += "\nJoined: " + joined[:position] + "[[" + word + "]]" + joined[position + len(word):]
+            row = {"priority": "REQUIRED" if required else "optional", "word": word,
+                   "line": display.strip(), "where": f"{decision['file']}:{decision['line']}",
+                   "action": ("not replaced (code)" if decision.get("code_sensitive_identifier") or decision.get("policy_reading") == "possible name in code" else "not replaced (text)") if required else
+                             f"hidden as {decision['replacement']}" if decision.get("replacement") else "hidden",
+                   "reason": decision.get("policy_reading", ""), "answer": "", "key": decision.get("review_key", "")}
+            previous = groups.get(key)
+            if previous is None or required and previous["priority"] != "REQUIRED":
+                groups[key] = row
+            elif row["where"] not in previous["where"].split("; "):
+                previous["where"] += f"; {decision['file']}:{decision['line']}"
+    rows = sorted(groups.values(), key=lambda row: (row["priority"] != "REQUIRED", folded_word(row["word"]), row["line"]))
     path.parent.mkdir(parents=True, exist_ok=True)
-    fieldnames = [
-        "group_key",
-        "review_kind",
-        "occurrences",
-        "candidate",
-        "reasons",
-        "locations",
-        "occurrence_ids",
-        "line_texts",
-    ]
-    ordered = sorted(
-        groups.items(),
-        key=lambda item: (-len(item[1]), item[0]),
-    )
     with path.open("w", newline="", encoding="utf-8") as handle:
-        writer = csv.DictWriter(handle, fieldnames=fieldnames)
+        writer = csv.DictWriter(handle, fieldnames=("priority", "word", "line", "where", "action", "reason", "answer", "key"))
         writer.writeheader()
-        for key, entries in ordered:
-            row = {
-                "group_key": key,
-                "review_kind": _review_kind(entries),
-                "occurrences": len(entries),
-                "candidate": entries[0]["candidate"],
-                "reasons": " | ".join(_unique(entry["reason"] for entry in entries)),
-                "locations": " | ".join(_unique(entry["location"] for entry in entries)),
-                "occurrence_ids": " | ".join(
-                    _unique(entry["occurrence_id"] for entry in entries if entry["occurrence_id"])
-                ),
-                "line_texts": "\n".join(entry["line_text"] for entry in entries),
-            }
-            writer.writerow(row)
-    return len(ordered)
-
-
-def _location(decision: Mapping[str, object]) -> str:
-    file = str(decision.get("file") or "")
-    line = str(decision.get("line") or "")
-    return f"{file}:{line}" if file and line else file or line
-
-
-def _review_kind(entries: list[dict[str, str]]) -> str:
-    outcomes = {entry["outcome"] for entry in entries}
-    if outcomes == {"review_required"}:
-        return "required"
-    if outcomes == {"anonymize_and_review"}:
-        return "correction"
-    return "mixed"
-
-
-def _unique(values: Iterable[str]) -> list[str]:
-    """Preserve first occurrence order while omitting empty values."""
-
-    seen: set[str] = set()
-    result: list[str] = []
-    for value in values:
-        if value and value not in seen:
-            seen.add(value)
-            result.append(value)
-    return result
+        writer.writerows(rows)
+    required = sum(row["priority"] == "REQUIRED" for row in rows)
+    return required, len(rows) - required

@@ -10,7 +10,8 @@ import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from .scanner import Finding, iter_all_files, is_text_candidate, relative_name
+from .scanner import Finding, iter_all_files, is_text_candidate, relative_name, fold_watchlist_value
+from .text_matching import physical_replacement
 from .source_reader import (
     SourceDecodingError,
     UnsupportedSourceEncodingError,
@@ -20,7 +21,7 @@ from .source_reader import (
     split_source_lines,
 )
 
-NON_LINKABLE_ENTITIES = {"NAME", "MATRICOLA", "SUSPECTED_MATRICOLA"}
+NON_LINKABLE_ENTITIES = {"MATRICOLA", "SUSPECTED_MATRICOLA"}
 
 
 @dataclass
@@ -50,6 +51,8 @@ def group_key(entity_type: str, value: str) -> tuple[str, str]:
 
 
 def finding_key(finding: Finding) -> tuple[str, str]:
+    if finding.entity_type == "NAME":
+        return "NAME", fold_watchlist_value(finding.logical_candidate or finding.text)
     if finding.entity_type in NON_LINKABLE_ENTITIES:
         normalized = normalize_value(finding.text)
         return finding.entity_type, f"OCCURRENCE:{finding.file}:{finding.line}:{finding.column}:{normalized}"
@@ -63,7 +66,7 @@ def group_findings(findings: list[Finding]) -> list[ValueGroup]:
         if key not in groups:
             groups[key] = ValueGroup(
                 entity_type=finding.entity_type,
-                original=" ".join(finding.text.split()),
+                original=" ".join((finding.logical_candidate or finding.text).split()),
                 key=key,
             )
         groups[key].findings.append(finding)
@@ -201,13 +204,7 @@ def suggested_replacement(group: ValueGroup, index: int, salt: str) -> str:
 
 
 def load_mapping(path: Path | None) -> dict[tuple[str, str], str]:
-    """Load explicit replacements and reject blank NAME decisions.
-
-    A blank value for a NAME row is not an instruction to keep the source text:
-    it is a privacy error.  Other entity types retain the legacy behaviour for
-    now, because their replacement policy is outside the NAME-only Phase A1
-    change.
-    """
+    """Load replacements for fields other than names."""
 
     if not path or not path.exists():
         return {}
@@ -219,11 +216,7 @@ def load_mapping(path: Path | None) -> dict[tuple[str, str], str]:
             key = (row.get("key") or "").strip()
             original = (row.get("original") or "").strip()
             replacement = (row.get("replacement") or "").strip()
-            if entity_type == "NAME" and not replacement:
-                raise ValueError(
-                    f"blank NAME replacement in mapping file {path}"
-                )
-            if not entity_type or not replacement:
+            if entity_type == "NAME" or not entity_type or not replacement:
                 continue
             if key:
                 mapping[(entity_type, key)] = replacement
@@ -257,7 +250,7 @@ def write_mapping_template(
                     "entity_type": group.entity_type,
                     "key": group.key[1],
                     "original": group.original,
-                    "suggested_replacement": suggested_replacement(group, index, salt),
+                    "suggested_replacement": (replacements or {}).get(group.key, suggested_replacement(group, index, salt)),
                     "replacement": (replacements or {}).get(group.key, ""),
                     "hits": group.count,
                     "locations": group.locations,
@@ -359,50 +352,6 @@ def apply_replacements(
     return changed_files, replacement_count
 
 
-def repair_written_files(
-    output_dir: Path,
-    findings: list[Finding],
-    replacements: dict[tuple[str, str], str],
-    not_complete_files: list[dict[str, str]] | None = None,
-    line_counts: dict[str, int] | None = None,
-) -> tuple[int, int]:
-    """Apply one safe repair pass to files already written to ``output_dir``.
-
-    This is used only by the final residual scan. It reuses the normal decoded
-    source, encoding, byte-width validation, and atomic-write path instead of
-    treating a post-write repair as an unsafe text edit.
-    """
-
-    incomplete = not_complete_files if not_complete_files is not None else []
-    by_file: dict[str, list[Finding]] = {}
-    for finding in findings:
-        by_file.setdefault(finding.file, []).append(finding)
-    changed_files = 0
-    replacement_count = 0
-    for relative, file_findings in by_file.items():
-        target = output_dir / relative
-        try:
-            decoded_source = read_source(target)
-            output_text = apply_file_replacements(decoded_source, file_findings, replacements)
-            output_bytes = encode_output_text(decoded_source, output_text)
-            validate_output_layout(decoded_source, output_text, output_bytes)
-            write_output_bytes_atomically(target, target, output_bytes)
-            if line_counts is not None:
-                line_counts[relative] = line_counts.get(relative, 0) + lines_past_column_72(decoded_source.text, output_text)
-        except (
-            SourceDecodingError,
-            UnsupportedSourceEncodingError,
-            ReplacementWriteError,
-            UnicodeEncodeError,
-            OSError,
-        ) as exc:
-            record_not_complete_file(incomplete, relative, exc)
-            continue
-        changed_files += 1
-        replacement_count += len(file_findings)
-    return changed_files, replacement_count
-
-
 class ReplacementWriteError(ValueError):
     """One source file could not be modified without breaking its layout."""
 
@@ -439,7 +388,7 @@ def apply_file_replacements(
                 f"replacement text no longer matches the source: {finding.file}:{finding.line}",
             )
 
-        replacement = replacements[finding_key(finding)]
+        replacement = physical_replacement(finding, replacements[finding_key(finding)])
         if "\r" in replacement or "\n" in replacement:
             raise ReplacementWriteError(
                 "replacement_contains_line_break",
@@ -485,7 +434,6 @@ def write_output_bytes_atomically(source: Path, target: Path, data: bytes) -> No
             handle.write(data)
             handle.flush()
             os.fsync(handle.fileno())
-        shutil.copystat(source, temporary_path)
         os.replace(temporary_path, target)
     except OSError:
         _remove_temporary_file(temporary_path)
@@ -498,7 +446,6 @@ def copy_file_atomically(source: Path, target: Path) -> None:
     temporary_path = _temporary_output_path(target)
     try:
         shutil.copyfile(source, temporary_path)
-        shutil.copystat(source, temporary_path)
         os.replace(temporary_path, target)
     except OSError:
         _remove_temporary_file(temporary_path)
@@ -552,5 +499,5 @@ def replacement_spans(findings: list[Finding], replacements: dict[tuple[str, str
     spans: dict[str, list[tuple[int, int, int]]] = {}
     for finding in findings:
         if finding_key(finding) in replacements:
-            spans.setdefault(finding.file, []).append((finding.start, finding.end, len(replacements[finding_key(finding)])))
+            spans.setdefault(finding.file, []).append((finding.start, finding.end, len(physical_replacement(finding, replacements[finding_key(finding)]))))
     return {file: sorted(items) for file, items in spans.items()}
