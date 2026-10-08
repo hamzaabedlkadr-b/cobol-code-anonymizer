@@ -310,3 +310,31 @@ def logical_bounds(logical, source_spans):
 
 def review_key(kind: str, line: str) -> str:
     return hashlib.sha256(json.dumps([kind, line], ensure_ascii=False).encode()).hexdigest()
+
+COBOL_KEYWORDS = frozenset(
+    "ACCEPT ADD ALTER CALL CANCEL CLOSE COMPUTE CONFIGURATION CONTINUE COPY "
+    "DATA DELETE DISPLAY DIVISION ELSE END-IF EVALUATE EXEC EXIT GO GOBACK "
+    "IF INITIALIZE INSPECT INSTALLATION INTO INVOKE OPEN PERFORM PIC PICTURE "
+    "MOVE PROCEDURE PROGRAM-ID READ REWRITE SECTION SELECT SET STOP STRING SUBTRACT "
+    "THEN UNSTRING VALUE WHEN WORKING-STORAGE WRITE"
+    .split()
+)
+
+
+def neighboring_model_context(finding, layout, marked_line):
+    """Add adjacent text lines as context, never as anchoring targets."""
+    if layout is None:
+        return marked_line
+    text = layout.source.text
+    starts = source_line_starts(text)
+    spans = finding.logical.source_spans(0, len(finding.logical.text)) if finding.logical else ((finding.start, finding.end),)
+    first = bisect_right(starts, spans[0][0]) - 1
+    last = bisect_right(starts, max(spans[-1][0], spans[-1][1] - 1)) - 1
+    neighbors = []
+    for index in (first - 1, last + 1):
+        value = ""
+        if 0 <= index < len(starts):
+            left, right = source_line_bounds(text, starts[index])
+            value = text[left + (6 if layout.format == "fixed_cobol" else 0):right]
+        neighbors.append(value.replace("[[", "").replace("]]", ""))
+    return "\n".join(line for line in (neighbors[0], marked_line, neighbors[1]) if line)

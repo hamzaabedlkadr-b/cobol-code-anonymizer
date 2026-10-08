@@ -5,6 +5,7 @@ from __future__ import annotations
 import re
 
 from .decisions import Decision
+from .text_matching import COBOL_KEYWORDS
 
 
 # These patterns identify source text that looks like an attempt to instruct
@@ -43,6 +44,7 @@ def has_minimum_watchlist_context(context: str) -> bool:
 
 
 NAME_POLICY_TABLE = {
+    "spacy_structure": ("leave_unchanged", "spaCy span contains punctuation, digits or COBOL keyword; not a candidate"),
     "other_hide": ("anonymize_whole", "non-name detector; hide"),
     "other_show": ("leave_unchanged", "non-name replacement skipped; show"),
     "review_hide": ("anonymize_whole", "reviewer says name; hide"),
@@ -58,8 +60,8 @@ NAME_POLICY_TABLE = {
     "judge_error": ("anonymize_whole", "judge answer invalid; hide"),
     "uncertain": ("anonymize_whole", "judge unsure; hide"),
     "person": ("anonymize_whole", "judge says person; hide"),
-    "non_person_disagrees": ("anonymize_whole", "approved word; verifier did not say not person; hide"),
-    "non_person_verified": ("leave_unchanged", "approved word; judge and verifier say not person; show"),
+    "non_person_disagrees": ("anonymize_whole", "verifier did not say not person; hide"),
+    "non_person_verified": ("leave_unchanged", "judge and verifier say not person; show"),
     "non_person": ("leave_unchanged", "judge says not person; show"),
 }
 
@@ -140,8 +142,14 @@ def apply_name_policy(
     if judge_decision.outcome != "propose_unchanged":
         return _table_decision(key="judge_error", occurrence_id=occurrence_id)
 
-    if not watchlist_single or not verifier_enabled:
+    if not verifier_enabled:
         return _table_decision(key="non_person", occurrence_id=occurrence_id, judge_decision=judge_decision)
     if verifier_decision is None or verifier_decision.outcome != "not_person":
         return _table_decision(key="non_person_disagrees", occurrence_id=occurrence_id)
     return _table_decision(key="non_person_verified", occurrence_id=occurrence_id, judge_decision=judge_decision)
+
+
+def spacy_candidate_reason(value: str) -> str:
+    if re.search(r"[-=()./\d]", value) or any(word.upper() in COBOL_KEYWORDS for word in value.split()):
+        return NAME_POLICY_TABLE["spacy_structure"][1]
+    return ""

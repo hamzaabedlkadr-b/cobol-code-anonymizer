@@ -19,7 +19,7 @@ from .judge import (
 from .overlaps import resolve_overlaps
 from .policy import NAME_POLICY_TABLE, apply_name_policy, has_minimum_watchlist_context, instruction_text_requires_anonymization
 from .review_decisions import ReviewDecisions, source_line
-from .text_matching import prepare_watchlist, span_is_code, name_word_spans, marked_source_line, source_findings, source_occurrence_id
+from .text_matching import prepare_watchlist, span_is_code, name_word_spans, marked_source_line, source_findings, source_occurrence_id, neighboring_model_context
 from .llm import NAME_VERIFIER_ENABLED
 from .source_reader import (
     SourceDecodingError,
@@ -322,14 +322,15 @@ def review_name_findings(
         count += 1
         if needs_model and name_judge is not None:
             name_judge.progress_update(f"candidate {count}/{total}: judging {finding.file}:{finding.line}")
+            model_context = neighboring_model_context(finding, layout, context)
             try:
-                judged, cached = name_judge.decide(candidate, context, occurrence_id)
+                judged, cached = name_judge.decide(candidate, model_context, occurrence_id)
             except Exception as exc:
                 _record_runtime_failure(name_judge, finding, "judge", exc)
-            if judged is not None and watchlist and verifier_enabled:
+            if judged is not None and verifier_enabled:
                 verified = _verify_candidate(name_judge=name_judge, name_verifier=name_verifier,
                                              judge_decision=judged, occurrence_id=occurrence_id,
-                                             finding=candidate, snippet=context)
+                                             finding=candidate, snippet=model_context)
         targets = [finding]
         if judged is not None and judged.outcome in {"anonymize_whole", "anonymize_part"} and judged.person_texts:
             try:

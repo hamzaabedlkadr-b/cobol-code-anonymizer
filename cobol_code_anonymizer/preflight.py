@@ -37,16 +37,7 @@ from .source_reader import (
 )
 
 
-# This is intentionally a conservative vocabulary used only to flag suspicious
-# watchlist rows.  It does not alter detection or acceptance decisions.
-COBOL_KEYWORDS = frozenset(
-    "ACCEPT ADD ALTER CALL CANCEL CLOSE COMPUTE CONFIGURATION CONTINUE COPY "
-    "DATA DELETE DISPLAY DIVISION ELSE END-IF EVALUATE EXEC EXIT GO GOBACK "
-    "IF INITIALIZE INSPECT INSTALLATION INTO INVOKE OPEN PERFORM PIC PICTURE "
-    "MOVE PROCEDURE PROGRAM-ID READ REWRITE SECTION SELECT SET STOP STRING SUBTRACT "
-    "THEN UNSTRING VALUE WHEN WORKING-STORAGE WRITE"
-    .split()
-)
+from .text_matching import COBOL_KEYWORDS, neighboring_model_context
 
 def _normalise_word(value: str) -> str:
     value = value.replace("’", "'").replace("''", "'")
@@ -120,7 +111,7 @@ class PreflightCounts:
                 f"watchlist_duplicate_entries_case_insensitive={self.duplicate_entries}",
                 f"watchlist_cobol_keyword_entries={self.keyword_entries}",
                 f"estimated_judge_calls={self.judge_calls}",
-                f"estimated_verifier_calls_upper_bound={len(self.approved_lines) if self.verifier_enabled else 0}",
+                f"estimated_verifier_calls_upper_bound={self.judge_calls if self.verifier_enabled else 0}",
                 f"estimated_extractor_calls={self.extractor_chunks}",
                 "new_extractor_candidates_not_in_judge_estimate=true",
                 "estimates_are_distinct_requests_before_cache_startup_and_retries=true",
@@ -283,7 +274,7 @@ def run_preflight(
                                      approved_word=word in approved_words)
             if gate.reading != NAME_POLICY_TABLE["no_judge"][1]:
                 continue
-            key = (word, context)
+            key = (word, neighboring_model_context(finding, layout, context))
             (counts.approved_lines if word in watchlist_words else counts.other_lines).add(key)
 
     counts.extractor_chunks = len(extraction_requests)

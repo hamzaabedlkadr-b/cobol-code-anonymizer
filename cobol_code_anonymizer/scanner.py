@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Callable
 
 from .cobol_layout import SourceLayout
+from .policy import spacy_candidate_reason
 from .candidates import (
     Detection,
     Occurrence,
@@ -1001,6 +1002,8 @@ def scan_presidio_names(text: str, rel_file: str, analyzer: object, scope: str) 
             raise RuntimeError("spaCy returned invalid source bounds")
         start, end = trim_span(text, result.start, result.end)
         if start >= end or not offset_in_ranges(start, end, ranges):
+            continue
+        if spacy_candidate_reason(text[start:end]):
             continue
         line, column = line_column(text, start)
         findings.append(Finding(rel_file, "NAME", text[start:end], start, end, line, column,
