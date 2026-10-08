@@ -231,10 +231,12 @@ def main(argv: list[str] | None = None) -> int:
             progress=print_progress,
         )
     except RuntimeError as exc:
+        end_progress()
         failures = model_startup_failures(input_path, "detector", str(exc))
         write_failure_report(report_dir, failures, input_path)
         print(f"NOT_COMPLETE: {exc}")
         return 1
+    end_progress()
     # Only extraction failures prevent a complete detection pass.
     if name_extractor is not None and not name_extractor.complete:
         failed_chunks = [row for row in getattr(name_extractor, "chunks", []) if row.get("status") != "ok"]
@@ -725,8 +727,40 @@ def default_output_dir(input_path: Path) -> Path:
     return input_path.parent / "anonymized"
 
 
+_PROGRESS_STEP = re.compile(r"(extraction chunk|candidate) (\d+)/(\d+)")
+_progress_file = ""
+
+
 def print_progress(message: str) -> None:
-    print(message, flush=True)
+    """Keep one live line per file on a terminal; print file lines elsewhere."""
+    global _progress_file
+    live = sys.stdout.isatty()
+    step = _PROGRESS_STEP.search(message)
+    if message.startswith("Analyzing file"):
+        _progress_file = message
+        text = message
+    elif _progress_file and step:
+        stage = "finding names" if step[1] == "extraction chunk" else "checking names"
+        text = f"{_progress_file}  {stage} {100 * int(step[2]) // int(step[3])}%"
+    elif _progress_file and message.startswith("[LLM"):
+        return
+    else:
+        if live and _progress_file:
+            print("\r\033[K", end="")
+        print(message, flush=True)
+        return
+    if live:
+        print(f"\r\033[K{text}", end="", flush=True)
+    elif text == message:
+        print(message, flush=True)
+
+
+def end_progress() -> None:
+    """Remove the live file line before the final summary."""
+    global _progress_file
+    if _progress_file and sys.stdout.isatty():
+        print("\r\033[K", end="", flush=True)
+    _progress_file = ""
 
 
 def group_findings_for_summary(findings: list[Finding]) -> list[ValueGroup]:
