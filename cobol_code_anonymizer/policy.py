@@ -56,6 +56,10 @@ NAME_POLICY_TABLE = {
     "too_little_context": ("anonymize_whole", "too little context; hide"),
     "instruction_text": ("anonymize_whole", "instruction text in line"),
     "residual_unresolved": ("review_required", "readable name after final check"),
+    "extraction_unresolved": ("review_required", "The model reported a name here that could not be found in the line. "
+                              "If there is no name: answer show. If there is a real name: add it to the "
+                              "watchlist file, rerun, then answer show."),
+    "extraction_show": ("leave_unchanged", "you confirmed nothing to hide in extractor context"),
     "no_judge": ("anonymize_whole", "judge not available; hide"),
     "judge_error": ("anonymize_whole", "judge answer invalid; hide"),
     "uncertain": ("anonymize_whole", "judge unsure; hide"),
@@ -100,10 +104,14 @@ def apply_name_policy(
     approved_word: bool = False,
     verifier_enabled: bool = True,
     residual_unresolved: bool = False,
+    extraction_unresolved: bool = False,
     review_answer: str | None = None,
 ) -> Decision:
     """Choose hide, show, or required review from the single table."""
 
+    if extraction_unresolved:
+        return _table_decision(key="extraction_show" if review_answer == "not_person" else "extraction_unresolved",
+                               occurrence_id=occurrence_id)
     if review_answer == "not_person":
         return _table_decision(key="review_show", occurrence_id=occurrence_id)
     if review_answer == "person":

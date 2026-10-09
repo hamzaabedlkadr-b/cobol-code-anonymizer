@@ -92,6 +92,11 @@ def import_review_answers(queue: Path, stored: Path) -> None:
     with queue.open(newline="", encoding="utf-8") as handle:
         for row in csv.DictReader(handle):
             answer = row.get("answer", "").strip().casefold()
+            if answer == "hide" and row.get("key", "").startswith("extractor:"):
+                old_answer = answers.pop((folded_word(row.get("name", row.get("word", ""))), row["key"]), None)
+                changed = changed or old_answer is not None
+                print(f"{row.get('file', '')}:{row.get('line', '')}: hide cannot be used here; add the name to the watchlist instead.")
+                continue
             word, line = row.get("name", row.get("word", "")).strip(), source_line(row.get("context", row.get("line", "")), row.get("name", row.get("word", "")))
             if answer in {"show", "hide"} and word and line:
                 answers[folded_word(word), row.get("key") or line] = {"word": word, "line": line, "answer": answer, "date": date.today().isoformat(), "key": row.get("key", "")}
