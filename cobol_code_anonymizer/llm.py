@@ -11,17 +11,13 @@ from dataclasses import dataclass
 from typing import Any
 
 
-# Project-wide Ollama defaults. Edit the two model values independently to
-# choose what the extraction and judge presets use. CLI options still override
-# either value for an individual run.
+# Project-wide Ollama defaults. CLI options override each role independently.
 OLLAMA_HOST = "http://127.0.0.1:11434"
-NAME_EXTRACT_MODEL = "ministral-3:3b"
+NAME_EXTRACT_MODEL = "qwen3.5:9b"
 NAME_JUDGE_MODEL = "ministral-3:3b"
-# The verifier is a separate role.  It may initially use the same local model
-# tag, but it receives an independent prompt and never sees the judge answer.
 NAME_VERIFIER_ENABLED = True
-NAME_VERIFIER_MODEL = NAME_JUDGE_MODEL
-OLLAMA_TIMEOUT = 60.0
+NAME_VERIFIER_MODEL = "qwen3.5:9b"
+OLLAMA_TIMEOUT = 300.0
 
 # Backward-compatible alias for integrations that imported the old shared
 # model constant. New code should use the mode-specific constants above.
