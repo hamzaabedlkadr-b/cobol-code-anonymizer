@@ -271,7 +271,7 @@ def run_preflight(
             gate = apply_name_policy(occurrence_id="0" * 64, model_context=context, judge_decision=None,
                                      code_sensitive_identifier=False, watchlist_pair=is_pair,
                                      watchlist_single=is_watchlist or word in watchlist_words,
-                                     approved_word=word in approved_words)
+                                     approved_word=word in approved_words, verifier_enabled=verifier_enabled)
             if gate.reading != NAME_POLICY_TABLE["no_judge"][1]:
                 continue
             key = (word, neighboring_model_context(finding, layout, context))

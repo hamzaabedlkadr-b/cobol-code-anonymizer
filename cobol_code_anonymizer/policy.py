@@ -37,10 +37,10 @@ _WORD_RE = re.compile(r"[^\W\d_]+", re.UNICODE)
 
 
 def has_minimum_watchlist_context(context: str) -> bool:
-    """Require two other letter words; sequence columns are removed by layout."""
+    """Require one other letter word; sequence columns are removed by layout."""
 
     line = re.sub(r"\[\[.*?\]\]", "", context)
-    return len(_WORD_RE.findall(line)) >= 2
+    return len(_WORD_RE.findall(line)) >= 1
 
 
 NAME_POLICY_TABLE = {
@@ -52,8 +52,8 @@ NAME_POLICY_TABLE = {
     "code_hide": ("anonymize_whole", "watchlist part in code or path; hide"),
     "code_show": ("leave_unchanged", "approved part in code or path; show"),
     "watchlist_pair": ("anonymize_whole", "adjacent watchlist words; hide"),
-    "watchlist": ("anonymize_whole", "watchlist word not approved; hide"),
-    "too_little_context": ("anonymize_whole", "approved word; too little context; hide"),
+    "watchlist": ("anonymize_whole", "verification disabled; hide"),
+    "too_little_context": ("anonymize_whole", "too little context; hide"),
     "instruction_text": ("anonymize_whole", "instruction text in line"),
     "residual_unresolved": ("review_required", "readable name after final check"),
     "no_judge": ("anonymize_whole", "judge not available; hide"),
@@ -127,7 +127,7 @@ def apply_name_policy(
         return _table_decision(key="watchlist_pair", occurrence_id=occurrence_id)
     if instruction_text_requires_anonymization(model_context):
         return _table_decision(key="instruction_text", occurrence_id=occurrence_id)
-    if watchlist_single and not approved_word:
+    if watchlist_single and not verifier_enabled:
         return _table_decision(key="watchlist", occurrence_id=occurrence_id)
     if watchlist_single and not has_minimum_watchlist_context(model_context):
         return _table_decision(key="too_little_context", occurrence_id=occurrence_id)

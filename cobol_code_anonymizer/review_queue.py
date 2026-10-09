@@ -49,7 +49,7 @@ def write_llm_name_review_csv(path: Path, rows):
 
 def plain_reason(reason):
     labels = {
-        "watchlist": "on the watchlist", "watchlist_pair": "two watchlist words together",
+        "watchlist": "verification disabled", "watchlist_pair": "two watchlist words together",
         "code_hide": "name inside code", "code_show": "approved word inside code",
         "person": "judge: person", "review_hide": "you answered hide", "review_show": "you answered show",
         "non_person_verified": "judge and verifier: not a person", "non_person": "judge: not a person",
