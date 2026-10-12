@@ -17,17 +17,18 @@ def build_llm_name_review_rows(decisions, extractor=None):
         candidate = str(decision.get("logical_candidate") or decision["text"])
         outcome = decision["policy_outcome"]
         pending = not decision.get("review_answer") and outcome != "leave_unchanged"
-        for start, end in name_word_spans(candidate) if pending else [(0, len(candidate))]:
+        unmatched = decision.get("source") == "llm_extraction_unmatched"
+        for start, end in name_word_spans(candidate) if pending and not unmatched else [(0, len(candidate))]:
             word = candidate[start:end]
-            context = str(decision.get("review_line") or source_line(str(decision.get("context", "")), candidate))
-            for match in reversed(list(IDENTIFIER_PART_RE.finditer(context))):
+            context = str(decision["context"] if unmatched else decision.get("review_line") or source_line(str(decision.get("context", "")), candidate))
+            for match in [] if unmatched else reversed(list(IDENTIFIER_PART_RE.finditer(context))):
                 if folded_word(match.group()) == folded_word(word):
                     context = context[:match.start()] + "[[" + match.group() + "]]" + context[match.end():]
             if decision.get("logical_context") and "[[" not in context:
                 context += "\nJoined: " + str(decision["logical_context"])
             action = "review (required)" if outcome == "review_required" else "hide (optional review)" if pending else "show" if outcome == "leave_unchanged" else "hide"
             row = {"name": word, "file": decision["file"], "line": decision["line"], "column": decision.get("column", ""),
-                   "extraction_status": comparisons.get((decision["file"], decision.get("start"), decision.get("end")), "detector_only"),
+                   "extraction_status": "unmatched" if unmatched else comparisons.get((decision["file"], decision.get("start"), decision.get("end")), "detector_only"),
                    "judge_status": decision.get("judge_outcome", "not_called"), "final_action": action,
                    "reason": plain_reason(decision["policy_reading"]), "detector_sources": decision.get("source", ""),
                    "context": context, "verifier_status": decision.get("verifier_outcome", "not_called"),

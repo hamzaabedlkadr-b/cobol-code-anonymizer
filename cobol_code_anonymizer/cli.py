@@ -255,6 +255,13 @@ def main(argv: list[str] | None = None) -> int:
     hidden_paths = [finding for finding, row in zip(path_findings, path_rows) if row["policy_outcome"] == "anonymize_whole"]
     groups = group_findings([*findings, *hidden_paths])
     rows = [*identifier_review_decisions, *(name_judge.decisions if name_judge else []), *path_rows]
+    for item in getattr(name_extractor, "review_items", []):
+        answer = review_answers.answer_for(item["text"], item["review_line"], item["review_key"])
+        decision = apply_name_policy(occurrence_id=item["review_key"].split(":", 1)[1],
+                                     model_context=item["context"], judge_decision=None,
+                                     code_sensitive_identifier=False, extraction_unresolved=True, review_answer=answer)
+        rows.append({**item, "review_answer": answer,
+                     "policy_outcome": decision.outcome, "policy_reading": decision.reading})
     report_dir.mkdir(parents=True, exist_ok=True)
     if args.names_only or args.scan_only or args.create_map:
         review_rows = build_llm_name_review_rows(rows, name_extractor)
@@ -332,7 +339,8 @@ def main(argv: list[str] | None = None) -> int:
             rows.append({**finding.to_dict(), "policy_outcome": "anonymize_whole" if hidden else "leave_unchanged",
                          "policy_reading": NAME_POLICY_TABLE["other_hide" if hidden else "other_show"][1]})
     # One audit row per source occurrence, including repeated final-check hits.
-    rows = list({(row["file"], row["line"], row.get("column", 0), row["text"]): row for row in rows}.values())
+    rows = list({(row["file"], row["line"], row.get("column", 0), row["text"],
+                  row.get("review_key", "") if row.get("source") == "llm_extraction_unmatched" else ""): row for row in rows}.values())
     aliases = {(finding.file, finding.line, finding.column, finding.text): physical_replacement(finding, replacements[finding_key(finding)])
                for finding in findings if finding_key(finding) in replacements}
     for row in rows:

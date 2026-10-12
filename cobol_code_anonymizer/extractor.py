@@ -19,7 +19,7 @@ from .llm_cache import PersistentResponseCache, response_cache_key
 from .logical_text import LogicalPiece, LogicalText, extraction_texts
 from .scanner import Finding, context_for, line_column, free_text_scan_ranges
 from .source_reader import split_source_lines
-from .text_matching import tolerant_person_occurrences, equivalent_person_occurrences, source_findings
+from .text_matching import tolerant_person_occurrences, equivalent_person_occurrences, source_findings, source_line_bounds, review_key
 
 
 EXTRACTION_SCHEMA = {
@@ -154,12 +154,12 @@ def locate_all(snippet: str, value: str) -> list[tuple[int, int]]:
     return matches if len(matches) == 1 else []
 
 
-def build_messages(records: list[ExtractionRecord]) -> list[dict[str, str]]:
+def build_messages(records: list[ExtractionRecord], retry_texts: tuple[str, ...] = ()) -> list[dict[str, str]]:
     data = [
         {"record_id": record.record_id, "text": record.text}
         for record in records
     ]
-    return [
+    messages = [
         {"role": "system", "content": SYSTEM_PROMPT},
         {
             "role": "user",
@@ -170,6 +170,10 @@ def build_messages(records: list[ExtractionRecord]) -> list[dict[str, str]]:
             ),
         },
     ]
+    if retry_texts:
+        messages[0]["content"] += "\nCopy these texts exactly or omit them. Copy only from the source records and use the correct record IDs."
+        messages[1]["content"] += "\nUNMATCHED_UNTRUSTED_TEXTS\n" + json.dumps(retry_texts, ensure_ascii=False)
+    return messages
 
 
 def spans_cover_name(text: str, name: str, spans: list[tuple[int, int]]) -> bool:
@@ -227,6 +231,7 @@ class NameExtractor:
         self.detector_only = 0
         self.chunks: list[dict[str, object]] = []
         self.comparisons: list[dict[str, object]] = []
+        self.review_items: list[dict[str, object]] = []
 
     def canary_ok(self) -> tuple[bool, str]:
         self._progress("startup check 1/2: positive name probe")
@@ -313,14 +318,24 @@ class NameExtractor:
             items = list(result.parsed.get("names", [])) if result.parsed else []
             anchored, unlocatable = self._anchor_items(local_chunk, items)
             if unlocatable:
-                self.complete = False
-                self.failure_reason = "extracted name not found in source"
-                self.errors += 1
-            if not unlocatable:
-                self._response_cache.put(self._cache_key(local_chunk), result.parsed)
+                retry_texts = tuple(sorted({str(item.get("text", "")) for item in unlocatable}))
+                retry = self._call(local_chunk, canary=False, retry_texts=retry_texts)
+                if retry.error or not retry.schema_ok:
+                    error = retry.error or "invalid response schema after retry"
+                    audit.update({"status": "error", "error": error})
+                    self.chunks.append(audit)
+                    self._open_circuit(error)
+                    continue
+                items.extend(retry.parsed["names"])
+                anchored, unlocatable = self._anchor_items(local_chunk, items)
+                located_texts = {value for spans in anchored.values() for _, _, value in spans}
+                unlocatable = list({(item.get("record_id"), item.get("text"), item["reason"]): item
+                                    for item in unlocatable if item.get("text") not in located_texts}.values())
+                for item in unlocatable:
+                    self.review_items.append(self._review_item(text, rel_file, local_chunk, item))
             anchored_rows = []
             for record in local_chunk:
-                for local_start, local_end, returned in anchored.get(record.record_id, []):
+                for local_start, local_end, returned in dict.fromkeys(anchored.get(record.record_id, [])):
                     source_spans = record.source_spans(local_start, local_end)
                     if not source_spans:
                         self.unlocatable += 1
@@ -351,8 +366,7 @@ class NameExtractor:
             self.unlocatable += len(unlocatable)
             audit.update(
                 {
-                    "status": "error" if unlocatable else "ok",
-                    "error": self.failure_reason if unlocatable else "",
+                    "status": "review" if unlocatable else "ok",
                     "returned": len(items),
                     "anchored": anchored_rows,
                     "unlocatable": unlocatable,
@@ -376,19 +390,22 @@ class NameExtractor:
             return 0.0
         return self.chunk_calls * 1000 / self.source_lines
 
-    def _call(self, records: list[ExtractionRecord], canary: bool) -> LlmJsonResult:
+    def _call(self, records: list[ExtractionRecord], canary: bool,
+              retry_texts: tuple[str, ...] = ()) -> LlmJsonResult:
+        messages = build_messages(records, retry_texts)
         if not canary:
-            key = self._cache_key(records)
+            key = response_cache_key(stage="extractor", messages=messages, schema=EXTRACTION_SCHEMA,
+                                     options={"temperature": 0}, model_digest=self.model_digest)
             payload = self._response_cache.get(key)
             if payload is not None:
-                if validate_schema_value(payload, EXTRACTION_SCHEMA) and not self._anchor_items(records, payload["names"])[1]:
+                if validate_schema_value(payload, EXTRACTION_SCHEMA):
                     self.cache_hits += 1
                     return LlmJsonResult(payload, "", 0.0, True)
                 self._response_cache.entries.pop(key, None)
         result = call_ollama_json(
             self.host,
             self.model,
-            build_messages(records),
+            messages,
             EXTRACTION_SCHEMA,
             timeout=self.timeout,
         )
@@ -398,12 +415,12 @@ class NameExtractor:
             self.chunk_calls += 1
         attempts = 2 if result.retried else 1
         self.http_attempts += attempts
-        self.retries += attempts - 1
+        self.retries += attempts - 1 + bool(retry_texts)
         if result.error:
             retry = call_ollama_json(
                 self.host,
                 self.model,
-                build_messages(records),
+                messages,
                 EXTRACTION_SCHEMA,
                 timeout=self.timeout,
             )
@@ -424,12 +441,9 @@ class NameExtractor:
         self.latency_s += result.latency_s
         self.prompt_tokens += result.prompt_tokens
         self.completion_tokens += result.completion_tokens
+        if not canary and not result.error and result.schema_ok:
+            self._response_cache.put(key, result.parsed)
         return result
-
-    def _cache_key(self, records: list[ExtractionRecord]) -> str:
-        return response_cache_key(stage="extractor", messages=build_messages(records),
-                                  schema=EXTRACTION_SCHEMA, options={"temperature": 0},
-                                  model_digest=self.model_digest)
 
     def _progress(self, message: str) -> None:
         if self.progress is not None:
@@ -449,17 +463,34 @@ class NameExtractor:
             record_id = item.get("record_id")
             value = str(item.get("text", "")).strip()
             record = by_id.get(record_id) if isinstance(record_id, int) else None
-            if record is None:
-                unlocatable.append({"record_id": record_id, "text": value, "reason": "unknown record"})
-                continue
-            locations = locate_all(record.text, value)
+            locations = locate_all(record.text, value) if record else []
             if not locations:
-                unlocatable.append({"record_id": record_id, "text": value, "reason": "not in source"})
+                matches = [(other.record_id, start, end) for other in records
+                           for start, end in equivalent_person_occurrences(other.text, value)
+                           if other.text[start:end] == value]
+                if matches:
+                    for other_id, start, end in matches:
+                        anchored.setdefault(other_id, []).append((start, end, value))
+                    continue
+                unlocatable.append({"record_id": record_id, "text": value,
+                                    "reason": "not in source" if record else "unknown record"})
                 continue
             anchored.setdefault(record_id, []).extend(
                 (start, end, value) for start, end in locations
             )
         return anchored, unlocatable
+
+    @staticmethod
+    def _review_item(text: str, file: str, records: list[ExtractionRecord], item: dict[str, object]) -> dict[str, object]:
+        selected = [record for record in records if record.record_id == item.get("record_id")] or records
+        bounds = sorted({source_line_bounds(text, start) for record in selected
+                         for start, _ in record.source_spans(0, len(record.text))})
+        line_text = "\n".join(text[start:end] for start, end in bounds)
+        return {"file": file, "line": line_column(text, bounds[0][0])[0], "column": "",
+                "text": item.get("text") or "unmatched extractor answer",
+                "source": "llm_extraction_unmatched", "review_line": line_text,
+                "review_key": "extractor:" + review_key("extractor", line_text),
+                "context": "\n".join(f"{line_column(text, start)[0]}: {text[start:end]}" for start, end in bounds)}
 
     @staticmethod
     def _canary_records(lines: tuple[str, ...]) -> list[ExtractionRecord]:

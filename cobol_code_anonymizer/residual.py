@@ -69,6 +69,7 @@ def scan_written_output(
             for start, end in name_word_spans(word):
                 known.add((row["file"], int(row["start"]) + start, int(row["start"]) + end,
                            fold_watchlist_value(word[start:end])))
+    review_files = {row["file"] for row in decisions or [] if row.get("policy_outcome") == "review_required"}
     replaceable: list[Finding] = []
     code_sensitive: list[Finding] = []
     errors: list[dict[str, str]] = []
@@ -155,7 +156,7 @@ def scan_written_output(
             else:
                 replaceable.append(finding)
         if sample_count and len(errors) == error_before:
-            withheld = len(replaceable) + len(code_sensitive) > unresolved_before
+            withheld = relative in review_files or len(replaceable) + len(code_sensitive) > unresolved_before
             target = withheld_samples if withheld else samples
             for line, text in enumerate(split_source_lines(source.text), 1):
                 if withheld:
