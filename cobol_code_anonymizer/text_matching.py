@@ -286,7 +286,7 @@ def physical_replacement(finding, alias: str) -> str:
 
 
 def fold_watchlist_value(value: str) -> str:
-    decomposed = unicodedata.normalize("NFKD", value.replace("''", "'").replace("’", "'")).upper().translate(str.maketrans("015", "OIS"))
+    decomposed = unicodedata.normalize("NFKD", value.replace("''", "'").replace("’", "'")).upper()
     return "".join(char for char in decomposed if not unicodedata.combining(char))
 
 

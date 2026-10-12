@@ -169,7 +169,6 @@ PAIR_TOKEN_RE = re.compile(
 )
 PAIR_GAP_RE = re.compile(r"(?:[ \t]+|,[ \t]*)")
 FOLDED_WATCHLIST_TOKEN_RE = WATCHLIST_TOKEN_RE
-WATCHLIST_FOLD_TRANSLATION = str.maketrans({"0": "O", "1": "I", "5": "S"})
 
 @dataclass(frozen=True)
 class Finding:
@@ -1097,13 +1096,7 @@ def scan_folded_watchlist_names(
     watchlist_values: tuple[str, ...] | list[str],
     scope: str,
 ) -> list[Finding]:
-    """Find visual watchlist variants and exactly-two-entry glued tokens.
-
-    The normal exact matcher remains authoritative for ordinary spellings. This
-    supplemental matcher folds only ``0/O``, ``1/I``, ``5/S``, case, and
-    accents. It deliberately requires a whole token, so suffixed identifiers
-    such as ``SALA1`` and ``C0NTI01`` are not converted into name candidates.
-    """
+    """Find whole watchlist tokens ignoring case, accents and apostrophe style."""
 
     entries = watchlist_values if isinstance(watchlist_values, dict) else prepare_watchlist(watchlist_values)[0]
     if not entries:
