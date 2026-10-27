@@ -15,6 +15,19 @@ It scans for:
 
 The tool writes anonymized copies to a new output folder. It does not modify the original files.
 
+## Watchlist-first review reports (new workflow)
+
+Extract watchlist names and structured PII, then classify each occurrence using a local
+Ollama model and three source lines. Produce reports without changing source files:
+
+```powershell
+python -m cobol_code_anonymizer.review "C:\path\to\cobol-folder" --watchlist "C:\lists\company_workers.txt" --report-dir "C:\reports\context_review"
+```
+
+Set up once: `python -m pip install -e .`, install/start Ollama, and run
+`ollama pull qwen3.5:9b`. See [setup, reports, grouping rules, and limitations](docs/context-review.md).
+The existing anonymization command below remains available.
+
 ## Quick Start
 
 ```powershell

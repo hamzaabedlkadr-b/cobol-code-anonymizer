@@ -17,6 +17,10 @@ dependencies = [
 
 [project.scripts]
 cobol-anonymizer = "cobol_code_anonymizer.cli:main"
+cobol-review = "cobol_code_anonymizer.review:main"
+
+[tool.setuptools.packages.find]
+include = ["cobol_code_anonymizer*"]
 
 [tool.setuptools.package-data]
 cobol_code_anonymizer = ["data/*.txt"]
