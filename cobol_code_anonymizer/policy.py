@@ -52,6 +52,7 @@ NAME_POLICY_TABLE = {
     "code_hide": ("anonymize_whole", "watchlist part in code or path; hide"),
     "code_show": ("leave_unchanged", "approved part in code or path; show"),
     "watchlist_pair": ("anonymize_whole", "adjacent watchlist words; hide"),
+    "watchlist_full_name": ("anonymize_whole", "multi-word watchlist entry; hide"),
     "watchlist": ("anonymize_whole", "verification disabled; hide"),
     "too_little_context": ("anonymize_whole", "too little context; hide"),
     "instruction_text": ("anonymize_whole", "instruction text in line"),
@@ -100,6 +101,7 @@ def apply_name_policy(
     verifier_decision: Decision | None = None,
     code_sensitive_identifier: bool,
     watchlist_pair: bool = False,
+    watchlist_full_name: bool = False,
     watchlist_single: bool = False,
     approved_word: bool = False,
     verifier_enabled: bool = True,
@@ -131,6 +133,8 @@ def apply_name_policy(
 
     if code_sensitive_identifier:
         return _table_decision(key="code_show" if approved_word else "code_hide", occurrence_id=occurrence_id)
+    if watchlist_full_name:
+        return _table_decision(key="watchlist_full_name", occurrence_id=occurrence_id)
     if watchlist_pair:
         return _table_decision(key="watchlist_pair", occurrence_id=occurrence_id)
     if instruction_text_requires_anonymization(model_context):

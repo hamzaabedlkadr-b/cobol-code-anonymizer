@@ -315,6 +315,7 @@ def review_name_findings(
         watchlist = finding.source == "watchlist" or word in watchlist_words
         approved = word in approved_words
         gates = dict(model_context=context, code_sensitive_identifier=code, watchlist_pair=pair,
+                     watchlist_full_name=watchlist and len(candidate.text.split()) > 1,
                      watchlist_single=watchlist, approved_word=approved, verifier_enabled=verifier_enabled)
         judged, verified, cached = None, None, False
         gate = apply_name_policy(occurrence_id=occurrence_id, judge_decision=None, **gates)

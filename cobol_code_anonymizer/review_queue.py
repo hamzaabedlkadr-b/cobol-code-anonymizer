@@ -36,7 +36,7 @@ def build_llm_name_review_rows(decisions, extractor=None):
             key = (folded_word(word), row["key"] or source_line(context, word)) if pending else (row["file"], row["line"], row["column"], word)
             if key not in groups or action == "review (required)":
                 groups[key] = row
-    return sorted(groups.values(), key=lambda row: (row["final_action"] != "review (required)", folded_word(row["name"]), str(row["file"]), int(row["line"])))
+    return sorted(groups.values(), key=lambda row: (row["final_action"] != "review (required)", str(row["file"]), int(row["line"]), int(row["column"] or 0)))
 
 
 def write_llm_name_review_csv(path: Path, rows):
@@ -51,6 +51,7 @@ def write_llm_name_review_csv(path: Path, rows):
 def plain_reason(reason):
     labels = {
         "watchlist": "verification disabled", "watchlist_pair": "two watchlist words together",
+        "watchlist_full_name": "on the watchlist",
         "code_hide": "name inside code", "code_show": "approved word inside code",
         "person": "judge: person", "review_hide": "you answered hide", "review_show": "you answered show",
         "non_person_verified": "judge and verifier: not a person", "non_person": "judge: not a person",

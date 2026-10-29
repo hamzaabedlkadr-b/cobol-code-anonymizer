@@ -836,7 +836,7 @@ def write_llm_name_review_text(
     """Write grouped LLM name decisions in the terminal summary style."""
     lines = ["To change a decision, write hide/show in the answer column of llm_name_review.csv and rerun."]
     grouped: dict[tuple[str, str, str, str], dict[str, object]] = {}
-    for row in rows:
+    for row in sorted(rows, key=lambda row: (str(row.get("file", "")), int(row.get("line") or 0), int(row.get("column") or 0))):
         status = llm_text_status(row)
         name = " ".join(str(row.get("name", "")).split()) or "<empty output>"
         reason = llm_text_reason(row)
@@ -859,13 +859,7 @@ def write_llm_name_review_text(
             group["locations"].append(location)
 
     status_order = {"REVIEW REQUIRED": 0, "ACCEPTED AS NAME - hidden": 1, "REJECTED - left as is": 2}
-    ordered = sorted(
-        grouped.values(),
-        key=lambda group: (
-            status_order.get(str(group["status"]), 99),
-            str(group["name"]).casefold(),
-        ),
-    )
+    ordered = sorted(grouped.values(), key=lambda group: status_order.get(str(group["status"]), 99))
     current_status = ""
     section_index = 0
     for group in ordered:
