@@ -56,8 +56,9 @@ Comma, semicolon, tab, and pipe separated fields are supported (including quoted
 For example, `Mario;Rossi;00058` supplies separate name and surname entries plus an ID.
 A header containing only name/surname/matricola column labels is skipped.
 Blank lines and lines starting with `#` are ignored. Unsupported numeric entries fail
-validation with a line number rather than silently being treated as names. Letters and
-digits must be separated, so `Mario00058` needs a space or delimiter.
+validation with a line number rather than silently being treated as names. Alphanumeric matricole consisting of one letter followed by digits, such as `D0023`,
+are also accepted (including in mixed rows); they never enter the name list. Longer
+letter prefixes attached to digits, such as `Mario00058`, still need a space or delimiter.
 
 ```text
 Mario
@@ -88,6 +89,10 @@ An explicitly listed full name is matched as one entry.
 - Matricole: every standalone five- or six-digit number, or seven digits starting
   with 5, 6, or 7. Leading zeros are preserved. Numeric-watchlist membership is
   recorded separately; dates, counts, and other matching numbers still reach the model.
+- Alphanumeric matricole: one letter followed by digits, such as `D0023`, supplied in
+  the watchlist. Exact standalone occurrences are extracted case-insensitively; the
+  original spelling and leading zeros are preserved. Unlisted alphanumeric codes are
+  not guessed to be employee IDs. Employee-watchlist membership is recorded separately.
 - Email: the existing email syntax pattern.
 - IBAN: the existing contiguous IBAN pattern, plus modulo-97 checksum and Italian
   length checks. Other countries' exact lengths and account existence are not checked.

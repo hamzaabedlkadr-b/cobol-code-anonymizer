@@ -24,6 +24,23 @@ class ReviewTests(unittest.TestCase):
             self.assertEqual(numbers, {'00058', '00273', '5123456', '123456', '7654321', '00593'})
             self.assertTrue(all(not any(char.isdigit() for char in name) for name in names))
 
+    def test_alphanumeric_matricole_are_not_names_and_match_exact_listed_ids(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            watchlist = root / 'workers.txt'
+            watchlist.write_text('D0023\nMario;Rossi;A00058\nGiulia Bianchi d0042\n')
+            names, ids = review.load_watchlist(watchlist)
+            self.assertEqual(ids, {'D0023', 'A00058', 'D0042'})
+            self.assertEqual(set(names), {'Mario', 'Rossi', 'Giulia Bianchi'})
+            source = root / 'test.cbl'
+            source.write_text("MOVE 'd0023' TO MATRICOLA\n* A00058 D0042 D00230 D0024 XD0023 D0023X\n")
+            rows = review.extract_file(source, root, review.name_pattern(names), ids)
+            self.assertEqual({row['value'] for row in rows}, {'d0023', 'A00058', 'D0042'})
+            self.assertTrue(all(row['entity_type'] == 'MATRICOLA' for row in rows))
+            self.assertTrue(all(row['validation']['in_employee_watchlist'] for row in rows))
+            self.assertTrue(all(row['rule'] == 'employee_watchlist' for row in rows))
+            self.assertEqual(rows[0]['validation']['digit_count'], 4)
+
     def test_watchlist_errors_identify_line_without_echoing_private_values(self):
         with tempfile.TemporaryDirectory() as folder:
             watchlist = Path(folder) / 'workers.txt'
