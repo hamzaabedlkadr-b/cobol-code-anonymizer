@@ -10,6 +10,30 @@ from cobol_code_anonymizer import review
 
 
 class ReviewTests(unittest.TestCase):
+    def test_watchlist_accepts_mixed_roster_and_separated_fields(self):
+        with tempfile.TemporaryDirectory() as folder:
+            watchlist = Path(folder) / 'workers.txt'
+            watchlist.write_text('\ufeff# company roster\nNome;Cognome;Matricola\n'
+                                 'Mario Rossi 00058\n00273 Giulia Bianchi\n'
+                                 '"Paolo";"Verdi";"5123456"\n'
+                                 'Anna,Neri,123456\nLuigi\tBlu\t7654321\n'
+                                 "D’Angelo|00593\n")
+            names, numbers = review.load_watchlist(watchlist)
+            self.assertEqual(set(names), {'Mario Rossi', 'Giulia Bianchi', 'Paolo', 'Verdi',
+                                          'Anna', 'Neri', 'Luigi', 'Blu', 'D’Angelo'})
+            self.assertEqual(numbers, {'00058', '00273', '5123456', '123456', '7654321', '00593'})
+            self.assertTrue(all(not any(char.isdigit() for char in name) for name in names))
+
+    def test_watchlist_errors_identify_line_without_echoing_private_values(self):
+        with tempfile.TemporaryDirectory() as folder:
+            watchlist = Path(folder) / 'workers.txt'
+            for entry in ('Mario12345', 'Mario 123', 'Mario 8123456'):
+                watchlist.write_text('Rossi\n' + entry)
+                with self.assertRaises(ValueError) as raised:
+                    review.load_watchlist(watchlist)
+                self.assertIn('line 2:', str(raised.exception))
+                self.assertNotIn(entry, str(raised.exception))
+
     def test_names_group_only_same_line_with_explicit_connectors(self):
         pattern = review.name_pattern(['Mario', 'Rossi', 'Sala'])
         for value in ['MARIO ROSSI', 'Mario D. Rossi', "Mario D’Rossi", 'Mario De Rossi']:
@@ -70,7 +94,7 @@ class ReviewTests(unittest.TestCase):
             code.write_text('* Sala server\n* Mario D. Rossi\nMOVE 00058 TO COD-DIP\n')
             original = code.read_bytes()
             watchlist = root / 'names.txt'
-            watchlist.write_text('Sala\nMario\nRossi\n00058\n')
+            watchlist.write_text('Sala\nMario;Rossi;00058\n')
             out = root / 'reports'
             args = [str(src), '--watchlist', str(watchlist), '--report-dir', str(out)]
             calls = []

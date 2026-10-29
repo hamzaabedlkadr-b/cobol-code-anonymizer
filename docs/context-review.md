@@ -50,8 +50,14 @@ There are no replacement prompts. To extract candidates without a model call, ad
 ## Watchlist and grouping
 
 Use a UTF-8 text file with one first name, surname, full name, or numeric matricola
-per line. Blank lines and lines starting with `#` are ignored. Unsupported numeric
-entries fail validation rather than silently being treated as names.
+per line. Mixed rows such as `Mario Rossi 00058` or `00058 Mario Rossi` are also
+accepted: the full name remains one name entry, and the numeric ID is stored separately.
+Comma, semicolon, tab, and pipe separated fields are supported (including quoted fields).
+For example, `Mario;Rossi;00058` supplies separate name and surname entries plus an ID.
+A header containing only name/surname/matricola column labels is skipped.
+Blank lines and lines starting with `#` are ignored. Unsupported numeric entries fail
+validation with a line number rather than silently being treated as names. Letters and
+digits must be separated, so `Mario00058` needs a space or delimiter.
 
 ```text
 Mario

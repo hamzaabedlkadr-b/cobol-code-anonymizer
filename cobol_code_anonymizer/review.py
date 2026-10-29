@@ -41,19 +41,35 @@ RESULT_FIELDS = FIELDS + ["decision", "reason", "model", "model_digest", "error"
 def load_watchlist(path: Path) -> tuple[list[str], set[str]]:
     text = path.read_text(encoding="utf-8-sig")
     names, numbers = set(), set()
-    for raw in text.splitlines():
-        value = " ".join(raw.split())
+    for line_number, raw in enumerate(text.splitlines(), 1):
+        value = raw.strip()
         if not value or value.startswith("#"):
             continue
-        if value.isdecimal():
-            if scanner.MATRICOLA_VALUE_RE.fullmatch(value):
-                numbers.add(value)
-            else:
-                raise ValueError(f"Unsupported numeric watchlist entry: {value!r}")
-        elif any(char.isdigit() for char in value):
-            raise ValueError("Use one name, surname, full name, or numeric matricola per watchlist line")
-        else:
-            names.add(value)
+        # Preserve separate CSV/TSV fields; names and IDs may also share a field.
+        delimiter = next((char for char in (";", "\t", "|", ",") if char in value), None)
+        try:
+            fields = next(csv.reader([value], delimiter=delimiter, strict=True)) if delimiter else [value]
+        except csv.Error as exc:
+            raise ValueError(f"Watchlist line {line_number}: invalid separated fields") from exc
+        if fields and all(field.strip().casefold() in {"nome", "cognome", "matricola", "name", "surname", "employee_id"}
+                          for field in fields):
+            continue
+        for field in fields:
+            field = " ".join(field.strip().strip('"').split())
+            if not field:
+                continue
+            ids = re.findall(r"(?<![\w])[0-9]+(?![\w])", field)
+            if any(not scanner.MATRICOLA_VALUE_RE.fullmatch(number) for number in ids):
+                raise ValueError(f"Watchlist line {line_number}: unsupported numeric entry; "
+                                 "matricole need 5 or 6 digits, or 7 starting with 5, 6, or 7")
+            name = re.sub(r"(?<![\w])[0-9]+(?![\w])", " ", field)
+            if any(char.isdigit() for char in name):
+                raise ValueError(f"Watchlist line {line_number}: letters and digits are joined in an entry; "
+                                 "separate the name and matricola with whitespace or a delimiter")
+            name = " ".join(name.strip(" :=").split())
+            numbers.update(ids)
+            if name:
+                names.add(name)
     if not names and not numbers:
         raise ValueError("Watchlist has no usable entries")
     return sorted(names, key=lambda item: (-len(item), item.casefold())), numbers
