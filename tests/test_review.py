@@ -157,6 +157,51 @@ class ReviewTests(unittest.TestCase):
             self.assertEqual(json.loads((out/'review.json').read_text())[0]['decision'], 'UNCERTAIN')
             self.assertEqual(code.read_bytes(), original)
 
+    def test_interrupt_writes_partial_reports_and_live_answers_then_resumes(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            source = root / 'demo.cbl'
+            source.write_text('* DEPUTATO (ES. FRATTINI)\n* SALA SERVER\n')
+            watchlist = root / 'names.txt'
+            watchlist.write_text('Frattini\nSala\n')
+            out = root / 'reports'
+            args = [str(source), '--watchlist', str(watchlist), '--report-dir', str(out)]
+            completed = {'decision': 'CONFIRMED', 'reason': 'Riferimento a una persona', 'error': ''}
+            terminal = io.StringIO()
+            with patch.object(review, 'model_digest', return_value='test'), \
+                 patch.object(review, 'classify', side_effect=[completed, KeyboardInterrupt]), \
+                 contextlib.redirect_stdout(terminal):
+                self.assertEqual(review.main(args), 130)
+            rows = json.loads((out / 'review.json').read_text())
+            self.assertEqual([row['decision'] for row in rows], ['CONFIRMED', 'NOT_REVIEWED'])
+            self.assertEqual(rows[0]['value'], 'FRATTINI')
+            self.assertTrue(json.loads((out / 'run.json').read_text())['interrupted'])
+            self.assertIn('INCOMPLETE', (out / 'report.txt').read_text())
+            self.assertTrue((out / 'review.csv').exists())
+            live = [json.loads(line) for line in (out / 'review_progress.jsonl').read_text().splitlines()]
+            self.assertEqual(len(live), 1)
+            self.assertEqual(live[0]['value'], 'FRATTINI')
+            self.assertIn('Riferimento a una persona', terminal.getvalue())
+            with patch.object(review, 'model_digest', return_value='test'), \
+                 patch.object(review, 'classify', return_value=completed) as model, \
+                 contextlib.redirect_stdout(io.StringIO()):
+                self.assertEqual(review.main(args), 0)
+                self.assertEqual(model.call_count, 1)
+
+    def test_interrupt_during_model_startup_still_writes_reports(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            source = root / 'demo.cbl'
+            source.write_text('* FRATTINI\n')
+            watchlist = root / 'names.txt'
+            watchlist.write_text('Frattini\n')
+            out = root / 'reports'
+            with patch.object(review, 'model_digest', side_effect=KeyboardInterrupt), \
+                 contextlib.redirect_stdout(io.StringIO()):
+                self.assertEqual(review.main([str(source), '--watchlist', str(watchlist), '--report-dir', str(out)]), 130)
+            self.assertEqual(json.loads((out / 'review.json').read_text())[0]['decision'], 'NOT_REVIEWED')
+            self.assertTrue((out / 'report.txt').exists())
+
     def test_reports_cannot_be_inside_source(self):
         with tempfile.TemporaryDirectory() as folder:
             root = Path(folder)
