@@ -3,7 +3,7 @@
 import csv
 from pathlib import Path
 from .review_decisions import folded_word, source_line
-from .text_matching import name_word_spans, IDENTIFIER_PART_RE
+from .text_matching import name_word_spans, IDENTIFIER_PART_RE, equivalent_person_occurrences
 from .policy import NAME_POLICY_TABLE
 
 
@@ -18,12 +18,15 @@ def build_llm_name_review_rows(decisions, extractor=None):
         outcome = decision["policy_outcome"]
         pending = not decision.get("review_answer") and outcome != "leave_unchanged"
         unmatched = decision.get("source") == "llm_extraction_unmatched"
-        for start, end in name_word_spans(candidate) if pending and not unmatched else [(0, len(candidate))]:
+        for start, end in name_word_spans(candidate) if outcome == "review_required" and pending and not unmatched else [(0, len(candidate))]:
             word = candidate[start:end]
             context = str(decision["context"] if unmatched else decision.get("review_line") or source_line(str(decision.get("context", "")), candidate))
             for match in [] if unmatched else reversed(list(IDENTIFIER_PART_RE.finditer(context))):
                 if folded_word(match.group()) == folded_word(word):
                     context = context[:match.start()] + "[[" + match.group() + "]]" + context[match.end():]
+            if not unmatched and len(word.split()) > 1:
+                for left, right in reversed(equivalent_person_occurrences(context, word)):
+                    context = context[:left] + "[[" + context[left:right] + "]]" + context[right:]
             if decision.get("logical_context") and "[[" not in context:
                 context += "\nJoined: " + str(decision["logical_context"])
             action = "review (required)" if outcome == "review_required" else "hide (optional review)" if pending else "show" if outcome == "leave_unchanged" else "hide"

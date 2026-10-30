@@ -835,22 +835,24 @@ def write_llm_name_review_text(
 ) -> None:
     """Write grouped LLM name decisions in the terminal summary style."""
     lines = ["To change a decision, write hide/show in the answer column of llm_name_review.csv and rerun."]
-    grouped: dict[tuple[str, str, str, str], dict[str, object]] = {}
+    grouped: dict[tuple[str, str], dict[str, object]] = {}
     for row in sorted(rows, key=lambda row: (str(row.get("file", "")), int(row.get("line") or 0), int(row.get("column") or 0))):
         status = llm_text_status(row)
         name = " ".join(str(row.get("name", "")).split()) or "<empty output>"
         reason = llm_text_reason(row)
-        key = (status, name.casefold(), reason)
+        key = (status, name.casefold())
         group = grouped.setdefault(
             key,
             {
                 "status": status,
                 "name": name,
-                "reason": reason,
+                "reasons": [],
                 "locations": [],
                 "count": 0,
             },
         )
+        if reason not in group["reasons"]:
+            group["reasons"].append(reason)
         group["count"] = int(group["count"]) + 1
         file = str(row.get("file", ""))
         line = str(row.get("line", ""))
@@ -870,9 +872,10 @@ def write_llm_name_review_text(
             lines.extend(["", f"[{status}]"])
         section_index += 1
         locations = ", ".join(str(item) for item in group["locations"]) or "unknown"
+        reasons = "; ".join(group["reasons"])
         lines.append(
             f"  {section_index:>3}. {group['name']}  hits={group['count']}  "
-            f"locations={locations}  reason={group['reason']}"
+            f"locations={locations}  reason={reasons}"
         )
 
     path.parent.mkdir(parents=True, exist_ok=True)
