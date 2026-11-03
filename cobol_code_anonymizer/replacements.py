@@ -233,25 +233,17 @@ def write_mapping_template(
 ) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("w", newline="", encoding="utf-8") as handle:
-        fieldnames = [
-            "entity_type",
-            "key",
-            "original",
-            "suggested_replacement",
-            "replacement",
-            "hits",
-            "locations",
-        ]
+        fieldnames = ["original", "replacement", "hits", "locations", "entity_type", "key"]
         writer = csv.DictWriter(handle, fieldnames=fieldnames)
         writer.writeheader()
-        for index, group in enumerate(groups, start=1):
+        for index, group in sorted(enumerate(groups, start=1),
+                                   key=lambda item: min((hit.file, hit.line, hit.column) for hit in item[1].findings)):
             writer.writerow(
                 {
                     "entity_type": group.entity_type,
                     "key": group.key[1],
                     "original": group.original,
-                    "suggested_replacement": (replacements or {}).get(group.key, suggested_replacement(group, index, salt)),
-                    "replacement": (replacements or {}).get(group.key, ""),
+                    "replacement": suggested_replacement(group, index, salt) if replacements is None else replacements.get(group.key, ""),
                     "hits": group.count,
                     "locations": group.locations,
                 }
@@ -270,6 +262,7 @@ def apply_replacements(
     line_counts: dict[str, int] | None = None,
     skip_roots: list[Path] | None = None,
     source_hashes: dict[str, str] | None = None,
+    redacted_spans: dict[str, list[tuple[int, int]]] | None = None,
 ) -> tuple[int, int]:
     """Write safely encoded, byte-width-preserving replacements.
 
@@ -328,6 +321,7 @@ def apply_replacements(
                 decoded_source,
                 file_findings,
                 replacements,
+                redacted_spans=(redacted_spans or {}).get(rel),
             )
             output_bytes = encode_output_text(decoded_source, output_text)
             validate_output_layout(decoded_source, output_text, output_bytes)
@@ -364,6 +358,7 @@ def apply_file_replacements(
     source: DecodedSource,
     findings: list[Finding],
     replacements: dict[tuple[str, str], str],
+    redacted_spans: list[tuple[int, int]] | None = None,
 ) -> str:
     """Apply one file's spans after validating their exact source boundaries."""
 
@@ -376,6 +371,13 @@ def apply_file_replacements(
             )
 
     output_text = source.text
+    if redacted_spans:
+        characters = list(output_text)
+        for start, end in redacted_spans:
+            for index in range(start, end):
+                if characters[index].isalpha():
+                    characters[index] = "*"
+        output_text = "".join(characters)
     for finding in reversed(ordered):
         if not 0 <= finding.start <= finding.end <= len(source.text):
             raise ReplacementWriteError(

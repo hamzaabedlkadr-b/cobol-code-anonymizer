@@ -57,9 +57,7 @@ NAME_POLICY_TABLE = {
     "too_little_context": ("anonymize_whole", "too little context; hide"),
     "instruction_text": ("anonymize_whole", "instruction text in line"),
     "residual_unresolved": ("review_required", "readable name after final check"),
-    "extraction_unresolved": ("review_required", "The model reported a name here that could not be found in the line. "
-                              "If there is no name: answer show. If there is a real name: add it to the "
-                              "watchlist file, rerun, then answer show."),
+    "extraction_unresolved": ("anonymize_whole", "reported name could not be located; affected text hidden automatically"),
     "extraction_show": ("leave_unchanged", "you confirmed nothing to hide in extractor context"),
     "no_judge": ("anonymize_whole", "judge not available; hide"),
     "judge_error": ("anonymize_whole", "judge answer invalid; hide"),

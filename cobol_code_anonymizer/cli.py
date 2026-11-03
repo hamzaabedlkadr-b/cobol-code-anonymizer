@@ -106,7 +106,8 @@ def main(argv: list[str] | None = None) -> int:
                                        *([args.map_file.resolve()] if args.map_file else [])])
     review_answers = load_review_decisions(report_dir / "review_decisions.csv")
     print(f"Input: {input_path}   Output: {output_dir}   Reports: {report_dir}")
-    print(f"Watchlist: {len(load_names(extra_watchlists, include_default=not args.no_default_name_watchlist))} words   Approved words: {len(approved_words)}")
+    print(f"Watchlist: {len(load_names(extra_watchlists, include_default=not args.no_default_name_watchlist))} words   "
+          f"Approved CODE/path words: {len(approved_words)}" + (" (none supplied)" if args.approved_words is None else ""))
     for field in ("name_extract_model", "name_judge_model", "name_verifier_model"):
         value = getattr(args, field)
         if value is not None:
@@ -150,6 +151,7 @@ def main(argv: list[str] | None = None) -> int:
             extract_host, extract_model, timeout=extract_timeout,
             chunk_lines=args.name_extract_chunk_lines,
             model_digest=model_digests[extract_model], cache_dir=report_dir,
+            progress=print_progress,
         )
         extract_ok, extract_reason = name_extractor.canary_ok()
         if not extract_ok:
@@ -175,6 +177,7 @@ def main(argv: list[str] | None = None) -> int:
             timeout=judge_timeout,
             cache_dir=report_dir,
             model_digest=judge_digest,
+            progress=print_progress,
         )
         judge_ok, judge_reason = name_judge.canary_ok()
         if judge_ok:
@@ -191,6 +194,7 @@ def main(argv: list[str] | None = None) -> int:
                     timeout=judge_timeout,
                     cache_dir=report_dir,
                     model_digest=model_digests[verifier_model],
+                    progress=print_progress,
                 )
                 print(f"Name verifier enabled: {verifier_model} at {judge_host}")
             else:
@@ -255,6 +259,7 @@ def main(argv: list[str] | None = None) -> int:
     hidden_paths = [finding for finding, row in zip(path_findings, path_rows) if row["policy_outcome"] == "anonymize_whole"]
     groups = group_findings([*findings, *hidden_paths])
     rows = [*identifier_review_decisions, *(name_judge.decisions if name_judge else []), *path_rows]
+    redacted_spans = {}
     for item in getattr(name_extractor, "review_items", []):
         answer = review_answers.answer_for(item["text"], item["review_line"], item["review_key"])
         decision = apply_name_policy(occurrence_id=item["review_key"].split(":", 1)[1],
@@ -262,12 +267,14 @@ def main(argv: list[str] | None = None) -> int:
                                      code_sensitive_identifier=False, extraction_unresolved=True, review_answer=answer)
         rows.append({**item, "review_answer": answer,
                      "policy_outcome": decision.outcome, "policy_reading": decision.reading})
+        if decision.outcome == "anonymize_whole":
+            redacted_spans.setdefault(item["file"], []).extend(item["spans"])
     report_dir.mkdir(parents=True, exist_ok=True)
     if args.names_only or args.scan_only or args.create_map:
         review_rows = build_llm_name_review_rows(rows, name_extractor)
         write_llm_name_review_csv(report_dir / "llm_name_review.csv", review_rows)
         write_llm_name_review_text(report_dir / "llm_finding.txt", args.mode, review_rows)
-        write_mapping_template(report_dir / (args.create_map.name if args.create_map else "replacement_map.csv"), groups, load_mapping(args.map_file), args.salt)
+        write_mapping_template(report_dir / (args.create_map.name if args.create_map else "replacement_map.csv"), groups, load_mapping(args.map_file) or None, args.salt)
         header = [f"Result: released 0, withheld 0, not complete {len({row['file'] for row in not_complete_files})}", "Sample: not prepared (scan only)"]
         write_scan_summary_report(report_dir / "scan_summary.txt", args.mode, input_path, findings, diagnostics, header)
         print("\n".join(header))
@@ -295,11 +302,14 @@ def main(argv: list[str] | None = None) -> int:
             file = relative_name(path, input_path)
             blocked_files.add(file)
             skipped_files.append({"file": file, "reason": "watchlist input"})
+    print("Writing anonymized copies...", flush=True)
     apply_replacements(input_path, staging_dir, findings, replacements, not_complete_files=write_failures,
                        skipped_files=skipped_files, blocked_files=blocked_files, written_files=staged_files,
-                       line_counts=line_counts, skip_roots=skip_roots, source_hashes=source_hashes)
+                       line_counts=line_counts, skip_roots=skip_roots, source_hashes=source_hashes,
+                       redacted_spans=redacted_spans)
     import random
     sample_seed = args.sample_seed if args.sample_seed is not None else random.SystemRandom().randrange(2 ** 63)
+    print(f"Final check: {len(staged_files)} files...", flush=True)
     residual = scan_written_output(staging_dir, load_names(extra_watchlists, include_default=not args.no_default_name_watchlist),
                                    findings, review_answers=review_answers, replaced_spans=replacement_spans(findings, replacements),
                                    shown_decisions=[row for row in rows if row.get("policy_outcome") == "leave_unchanged"],
@@ -322,6 +332,7 @@ def main(argv: list[str] | None = None) -> int:
     failed_files = {row["file"] for row in not_complete_files}
     review_files -= failed_files
     passed_files = set(staged_files) - failed_files - review_files
+    print(f"Releasing {len(passed_files)} checked files...", flush=True)
     _move_checked_files(staging_dir, report_dir / "needs_review", review_files, write_failures)
     _move_checked_files(staging_dir, output_dir, passed_files, write_failures, file_names=file_names)
     not_complete_files.extend(write_failures)
@@ -478,7 +489,7 @@ def build_parser() -> argparse.ArgumentParser:
         default="context",
         help="Scan names only in comments/literals by default, or scan all text.",
     )
-    parser.add_argument("--approved-words", type=Path, help="Watchlist words that models may show in clear context.")
+    parser.add_argument("--approved-words", type=Path, help="Watchlist words allowed unchanged in CODE and paths; text still uses model checks.")
     parser.add_argument(
         "--watchlist",
         action="append",
@@ -749,7 +760,9 @@ def print_progress(message: str) -> None:
         text = message
     elif _progress_file and step:
         stage = "finding names" if step[1] == "extraction chunk" else "checking names"
-        text = f"{_progress_file}  {stage} {100 * int(step[2]) // int(step[3])}%"
+        text = f"{_progress_file}  {stage} {step[2]}/{step[3]} ({100 * int(step[2]) // int(step[3])}%)"
+    elif _progress_file and message.startswith("[LLM verifier]"):
+        text = f"{_progress_file}  verifying a name"
     elif _progress_file and message.startswith("[LLM"):
         return
     else:
@@ -759,8 +772,8 @@ def print_progress(message: str) -> None:
         return
     if live:
         print(f"\r\033[K{text}", end="", flush=True)
-    elif text == message:
-        print(message, flush=True)
+    elif text == message or step and int(step[2]) in {1, int(step[3])}:
+        print(text, flush=True)
 
 
 def end_progress() -> None:

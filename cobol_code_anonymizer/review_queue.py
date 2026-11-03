@@ -30,6 +30,8 @@ def build_llm_name_review_rows(decisions, extractor=None):
             if decision.get("logical_context") and "[[" not in context:
                 context += "\nJoined: " + str(decision["logical_context"])
             action = "review (required)" if outcome == "review_required" else "hide (optional review)" if pending else "show" if outcome == "leave_unchanged" else "hide"
+            if unmatched and outcome == "anonymize_whole":
+                action = "hide"
             row = {"name": word, "file": decision["file"], "line": decision["line"], "column": decision.get("column", ""),
                    "extraction_status": "unmatched" if unmatched else comparisons.get((decision["file"], decision.get("start"), decision.get("end")), "detector_only"),
                    "judge_status": decision.get("judge_outcome", "not_called"), "final_action": action,

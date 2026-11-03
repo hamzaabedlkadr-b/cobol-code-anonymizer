@@ -485,12 +485,12 @@ class NameExtractor:
     @staticmethod
     def _review_item(text: str, file: str, records: list[ExtractionRecord], item: dict[str, object]) -> dict[str, object]:
         selected = [record for record in records if record.record_id == item.get("record_id")] or records
-        bounds = sorted({source_line_bounds(text, start) for record in selected
-                         for start, _ in record.source_spans(0, len(record.text))})
+        spans = sorted({span for record in selected for span in record.source_spans(0, len(record.text))})
+        bounds = sorted({source_line_bounds(text, start) for start, _ in spans})
         line_text = "\n".join(text[start:end] for start, end in bounds)
         return {"file": file, "line": line_column(text, bounds[0][0])[0], "column": "",
                 "text": item.get("text") or "unmatched extractor answer",
-                "source": "llm_extraction_unmatched", "review_line": line_text,
+                "source": "llm_extraction_unmatched", "review_line": line_text, "spans": spans,
                 "review_key": "extractor:" + review_key("extractor", line_text),
                 "context": "\n".join(f"{line_column(text, start)[0]}: {text[start:end]}" for start, end in bounds)}
 

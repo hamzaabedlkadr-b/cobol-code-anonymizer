@@ -126,6 +126,11 @@ def scan_path(
 
     for index, path in enumerate(paths, start=1):
         file_started = time.perf_counter()
+        decision_start = len(identifier_reviews)
+        judge_start = len(getattr(name_judge, "decisions", []))
+        fallback_start = len(getattr(name_extractor, "review_items", []))
+        counters = [(model, getattr(model, "chunk_calls", getattr(model, "calls", 0)), getattr(model, "cache_hits", 0))
+                    for model in (name_extractor, name_judge, name_verifier)]
         relative_file = scanner.relative_name(path, input_path)
         if progress is not None:
             progress(f"Analyzing file {index}/{len(paths)}: {relative_file}")
@@ -188,6 +193,16 @@ def scan_path(
             findings.extend(file_findings)
             if file_times is not None:
                 file_times[relative_file] = time.perf_counter() - file_started
+            if progress is not None:
+                rows = [*identifier_reviews[decision_start:], *getattr(name_judge, "decisions", [])[judge_start:]]
+                shown = sum(row["policy_outcome"] == "leave_unchanged" for row in rows)
+                fallbacks = sum(not review_answers or review_answers.answer_for(item["text"], item["review_line"], item["review_key"]) != "not_person"
+                                for item in getattr(name_extractor, "review_items", [])[fallback_start:])
+                calls = sum(getattr(model, "chunk_calls", getattr(model, "calls", 0)) - before for model, before, _ in counters)
+                cached = sum(getattr(model, "cache_hits", 0) - before for model, _, before in counters)
+                progress(f"Scanned {relative_file}: selected spans {len(file_findings)}, shown {shown}, "
+                         f"automatic text fallbacks {fallbacks}; model calls {calls}, cache hits {cached}; "
+                         f"{time.perf_counter() - file_started:.1f} s")
             continue
 
         finally:
@@ -208,6 +223,8 @@ def scan_path(
                 "message": message,
             }
         )
+        if progress is not None:
+            progress(f"Scan failed: {relative_file} — {reason}")
         diag.append(f"NOT_COMPLETE: {message}")
         if file_times is not None:
             file_times[relative_file] = time.perf_counter() - file_started
