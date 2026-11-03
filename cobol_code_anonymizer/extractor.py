@@ -19,7 +19,7 @@ from .llm_cache import PersistentResponseCache, response_cache_key
 from .logical_text import LogicalPiece, LogicalText, extraction_texts
 from .scanner import Finding, context_for, line_column, free_text_scan_ranges
 from .source_reader import split_source_lines
-from .text_matching import tolerant_person_occurrences, equivalent_person_occurrences, source_findings, source_line_bounds, review_key
+from .text_matching import tolerant_person_occurrences, equivalent_person_occurrences, exact_name_word_spans, source_findings, source_line_bounds, review_key
 
 
 EXTRACTION_SCHEMA = {
@@ -472,9 +472,11 @@ class NameExtractor:
                     for other_id, start, end in matches:
                         anchored.setdefault(other_id, []).append((start, end, value))
                     continue
-                unlocatable.append({"record_id": record_id, "text": value,
-                                    "reason": "not in source" if record else "unknown record"})
-                continue
+                locations = exact_name_word_spans(record.text, value) if record else []
+                if not locations:
+                    unlocatable.append({"record_id": record_id, "text": value,
+                                        "reason": "not in source" if record else "unknown record"})
+                    continue
             anchored.setdefault(record_id, []).extend(
                 (start, end, value) for start, end in locations
             )

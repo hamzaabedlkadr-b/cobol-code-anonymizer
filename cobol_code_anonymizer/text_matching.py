@@ -15,6 +15,7 @@ import hashlib
 import json
 import unicodedata
 from bisect import bisect_right
+from collections import Counter
 from dataclasses import replace
 from .source_reader import source_line_starts
 
@@ -177,6 +178,26 @@ def equivalent_person_occurrences(
 _PERSON_WORD_RE = re.compile(r"[^\W_]+(?:(?:''|'|’)[^\W_]+)*", re.UNICODE)
 WATCHLIST_TOKEN_RE = _PERSON_WORD_RE
 IDENTIFIER_PART_RE = re.compile(r"[^\W\d_]+(?:(?:''|'|’)[^\W\d_]+)*", re.UNICODE)
+
+
+def exact_name_word_spans(line: str, person_text: str) -> list[tuple[int, int]]:
+    """Match exact name words in any order, rejecting ambiguous word counts."""
+    words = [normalize_person_text(word) for word in _PERSON_WORD_RE.findall(person_text)]
+    if len(words) < 2 or any(any(char.isdigit() for char in word) for word in words):
+        return []
+    wanted = Counter(words)
+    matches = [match for match in _PERSON_WORD_RE.finditer(line)
+               if normalize_person_text(match.group()) in wanted]
+    if Counter(normalize_person_text(match.group()) for match in matches) != wanted:
+        return []
+    spans = []
+    for match in matches:
+        if spans and line[spans[-1][1]:match.start()].isspace():
+            spans[-1] = (spans[-1][0], match.end())
+        else:
+            spans.append((match.start(), match.end()))
+    return spans
+
 
 def _word_matches_with_tolerance(source_word: str, copied_word: str) -> bool:
     """Compare one copied word without accepting short-word guesses."""
