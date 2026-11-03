@@ -387,6 +387,8 @@ class NameJudge:
         # constructed.  The CLI turns these into per-file NOT_COMPLETE rows.
         self.runtime_failures: list[dict[str, str]] = []
         self.latency_s = 0.0
+        self.prompt_tokens = 0
+        self.completion_tokens = 0
         self.http_attempts = 0
         self.canary_calls = 0
         self.calls = 0
@@ -506,6 +508,8 @@ class NameJudge:
             timeout=self.timeout,
         )
         self.latency_s += result.latency_s
+        self.prompt_tokens += result.prompt_tokens
+        self.completion_tokens += result.completion_tokens
         self.http_attempts += 1 + int(result.retried)
         self.calls += 1
 
@@ -559,6 +563,8 @@ class NameJudge:
                 timeout=self.timeout,
             )
             self.latency_s += retry.latency_s
+            self.prompt_tokens += retry.prompt_tokens
+            self.completion_tokens += retry.completion_tokens
             self.http_attempts += 1 + int(retry.retried)
             self.calls += 1
             if retry.error:
@@ -629,6 +635,8 @@ class NameJudge:
             timeout=self.timeout,
         )
         self.latency_s += result.latency_s
+        self.prompt_tokens += result.prompt_tokens
+        self.completion_tokens += result.completion_tokens
         self.http_attempts += 1 + int(result.retried)
         if result.error:
             return CanaryAnswer("transport", detail=result.error)

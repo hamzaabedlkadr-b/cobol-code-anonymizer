@@ -120,6 +120,8 @@ class NameVerifier:
         self.progress = progress
         self.model_digest = model_digest or model_reference_digest(model, host)
         self.latency_s = 0.0
+        self.prompt_tokens = 0
+        self.completion_tokens = 0
         self.http_attempts = 0
         self.canary_calls = 0
         self.calls = 0
@@ -173,6 +175,8 @@ class NameVerifier:
             timeout=self.timeout,
         )
         self.latency_s += result.latency_s
+        self.prompt_tokens += result.prompt_tokens
+        self.completion_tokens += result.completion_tokens
         self.http_attempts += 1 + int(result.retried)
         self.calls += 1
         if result.error:

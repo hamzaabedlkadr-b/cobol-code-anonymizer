@@ -232,22 +232,28 @@ def write_mapping_template(
     salt: str,
 ) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
+    name_lines = []
     with path.open("w", newline="", encoding="utf-8") as handle:
         fieldnames = ["original", "replacement", "hits", "locations", "entity_type", "key"]
         writer = csv.DictWriter(handle, fieldnames=fieldnames)
         writer.writeheader()
         for index, group in sorted(enumerate(groups, start=1),
                                    key=lambda item: min((hit.file, hit.line, hit.column) for hit in item[1].findings)):
+            replacement = suggested_replacement(group, index, salt) if replacements is None else replacements.get(group.key, "")
+            if group.entity_type == "NAME" and replacement:
+                name_lines.append(f"{group.original} -> {replacement}\n")
             writer.writerow(
                 {
                     "entity_type": group.entity_type,
                     "key": group.key[1],
                     "original": group.original,
-                    "replacement": suggested_replacement(group, index, salt) if replacements is None else replacements.get(group.key, ""),
+                    "replacement": replacement,
                     "hits": group.count,
                     "locations": group.locations,
                 }
             )
+    if path.suffix.casefold() != ".txt":
+        path.with_suffix(".txt").write_text("".join(name_lines), encoding="utf-8")
 
 
 def apply_replacements(

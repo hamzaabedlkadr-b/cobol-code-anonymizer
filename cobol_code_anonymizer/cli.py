@@ -6,6 +6,7 @@ import argparse
 import csv
 import time
 from collections import Counter
+from datetime import datetime, timezone
 import re
 import sys
 import unicodedata
@@ -209,6 +210,7 @@ def main(argv: list[str] | None = None) -> int:
             print(f"File status report: {status_path}")
             return 1
 
+    models = (("Extractor", name_extractor), ("Judge", name_judge), ("Verifier", name_verifier))
     try:
         findings = scan_path(
             input_path=input_path,
@@ -280,6 +282,7 @@ def main(argv: list[str] | None = None) -> int:
         print("\n".join(header))
         print(f"Mode: {args.mode}")
         print_scan_summary(input_path, findings, groups)
+        write_run_stats(report_dir / "run_stats.txt", started, models, header[0])
         return 1 if not_complete_files else 0
 
     replacements = choose_replacements(groups, load_mapping(args.map_file), args.salt, args.auto) if groups else {}
@@ -382,6 +385,7 @@ def main(argv: list[str] | None = None) -> int:
     print("\n".join(header))
     print(f"Mode: {args.mode}")
     print_scan_summary(input_path, findings, groups)
+    write_run_stats(report_dir / "run_stats.txt", started, models, header[0])
     return 1 if review_files or failures else 0
 
 
@@ -394,9 +398,9 @@ def clear_previous_reports(report_dir: Path, inputs: list[Path]) -> None:
         "judge_decisions.json", "layout_summary.json", "llm_finding.txt",
         "llm_name_review.csv", "names_findings.csv", "names_findings.json",
         "not_complete_files.json", "out_manifest.csv", "path_review.csv",
-        "preflight.txt", "frequent_words.csv", "replacement_map.csv", "residual_findings.json",
+        "preflight.txt", "frequent_words.csv", "replacement_map.csv", "replacement_map.txt", "residual_findings.json",
         "review_queue.csv", "llm_name_review.csv", "sample_check.csv", "sample_check.txt", "changes.txt", "scan_summary.txt", "skipped_files.csv",
-        "verifier_summary.json", "decisions.csv",
+        "verifier_summary.json", "decisions.csv", "run_stats.txt",
     )
     protected = [path.resolve() for path in inputs]
     for name in (*files, "staging", "needs_review"):
@@ -418,6 +422,33 @@ def write_failure_report(report_dir, failures, input_path):
     header += ["Sample: not prepared (no checked files)"]
     write_scan_summary_report(path, "not complete", input_path, [], [], header)
     return path
+
+
+def write_run_stats(path: Path, started: float, models, result: str) -> None:
+    """Write batch timing and reported model usage without source text."""
+    elapsed = time.perf_counter() - started
+    lines = ["Run statistics", f"Finished (UTC): {datetime.now(timezone.utc).isoformat(timespec='seconds')}",
+             f"Duration: {elapsed / 3600:.2f} h ({elapsed:.1f} s)", result,
+             "Model time and tokens include startup checks and retries.",
+             "Tokens are reported by Ollama; missing counts are zero. Cache hits use no new tokens."]
+    input_tokens = output_tokens = 0
+    for role, model in models:
+        if model is None:
+            continue
+        prompt = model.prompt_tokens
+        completion = model.completion_tokens
+        input_tokens += prompt
+        output_tokens += completion
+        lines += ["", f"{role}: {model.model}",
+                  f"Model requests (excluding startup): {getattr(model, 'chunk_calls', getattr(model, 'calls', 0))}",
+                  f"Startup requests: {model.canary_calls}",
+                  f"HTTP attempts (chat, including startup/retries): {model.http_attempts}",
+                  f"Cache hits: {model.cache_hits}", f"Model request time: {model.latency_s:.1f} s",
+                  f"Input tokens (reported): {prompt}", f"Output tokens (reported): {completion}",
+                  f"Failures: {model.errors}"]
+    lines += ["", f"Total input tokens (reported): {input_tokens}", f"Total output tokens (reported): {output_tokens}"]
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    print(f"Run statistics: {path}")
 
 
 def build_parser() -> argparse.ArgumentParser:
