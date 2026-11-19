@@ -13,6 +13,7 @@ import unicodedata
 from pathlib import Path
 
 from . import __version__
+from .checkpoints import save_checkpoint, source_signature
 from .llm import (
     NAME_EXTRACT_MODEL,
     NAME_JUDGE_MODEL,
@@ -46,6 +47,8 @@ def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     raw_args = list(argv) if argv is not None else sys.argv[1:]
     args = parser.parse_args(raw_args)
+    if args.step != "all" and (args.preflight or args.scan_only or args.names_only or args.create_map):
+        parser.error("--step cannot be combined with preflight or scan-only options")
     if args.sample_unchanged < 0:
         parser.error("--sample-unchanged must be zero or greater")
     apply_mode_preset(args, raw_args)
@@ -82,7 +85,7 @@ def main(argv: list[str] | None = None) -> int:
         )
     if output_dir.exists() and not output_dir.is_dir():
         parser.error(f"--out-dir is not a folder: {output_dir}")
-    if output_dir.exists() and any(output_dir.iterdir()):
+    if args.step != "extract" and output_dir.exists() and any(output_dir.iterdir()):
         if not args.overwrite:
             parser.error(
                 f"Output folder is not empty: {output_dir}; use --overwrite to replace it"
@@ -93,6 +96,11 @@ def main(argv: list[str] | None = None) -> int:
     approved_words = frozenset(fold_watchlist_value(word) for word in
                               load_names([args.approved_words] if args.approved_words else [], include_default=False))
     skip_roots = [output_dir, report_dir, *[path.resolve() for path in (args.approved_words, args.map_file) if path]]
+    signature = source_signature(input_path, skip_roots, extra_watchlists, {
+        "entities": sorted(entities), "name_scope": args.name_scope,
+        "deterministic_names": args.mode != "extraction-only",
+        "presidio": not args.no_presidio, "presidio_model": args.presidio_model,
+    }) if args.step != "all" else None
     source_hashes: dict[str, str] = {}
     file_times: dict[str, float] = {}
     diagnostics: list[str] = []
@@ -102,9 +110,10 @@ def main(argv: list[str] | None = None) -> int:
     identifier_review_decisions: list[dict[str, object]] = []
     resolved_review_files: list[str] = []
     import_review_answers(report_dir / "llm_name_review.csv", report_dir / "review_decisions.csv")
-    clear_previous_reports(report_dir, [input_path, *extra_watchlists,
-                                       *([args.approved_words.resolve()] if args.approved_words else []),
-                                       *([args.map_file.resolve()] if args.map_file else [])])
+    if args.step == "all":
+        clear_previous_reports(report_dir, [input_path, *extra_watchlists,
+                                           *([args.approved_words.resolve()] if args.approved_words else []),
+                                           *([args.map_file.resolve()] if args.map_file else [])])
     review_answers = load_review_decisions(report_dir / "review_decisions.csv")
     print(f"Input: {input_path}   Output: {output_dir}   Reports: {report_dir}")
     print(f"Watchlist: {len(load_names(extra_watchlists, include_default=not args.no_default_name_watchlist))} words   "
@@ -116,13 +125,13 @@ def main(argv: list[str] | None = None) -> int:
             if not value:
                 parser.error(f"--{field.replace('_', '-')} must not be blank")
             setattr(args, field, value)
-    if not (args.names_only or args.scan_only or args.create_map) and output_dir.exists():
+    if args.step == "all" and not (args.names_only or args.scan_only or args.create_map) and output_dir.exists():
         import shutil
         shutil.rmtree(output_dir)
     requested_models = []
     if args.name_extract or args.name_extract_model:
         requested_models.append(("extractor", args.name_extract_model or NAME_EXTRACT_MODEL))
-    if args.name_judge or args.name_judge_model:
+    if args.step != "extract" and (args.name_judge or args.name_judge_model):
         requested_models.append(("judge", args.name_judge_model or NAME_JUDGE_MODEL))
         if NAME_VERIFIER_ENABLED:
             requested_models.append(("verifier", args.name_verifier_model or NAME_VERIFIER_MODEL))
@@ -165,7 +174,7 @@ def main(argv: list[str] | None = None) -> int:
 
     name_judge = None
     name_verifier = None
-    if args.name_judge or args.name_judge_model:
+    if args.step != "extract" and (args.name_judge or args.name_judge_model):
         from .judge import NameJudge
 
         judge_model = args.name_judge_model or NAME_JUDGE_MODEL
@@ -235,6 +244,7 @@ def main(argv: list[str] | None = None) -> int:
             verifier_enabled=NAME_VERIFIER_ENABLED,
             deterministic_names_enabled=args.mode != "extraction-only",
             progress=print_progress,
+            collect_only=args.step == "extract",
         )
     except RuntimeError as exc:
         end_progress()
@@ -251,6 +261,18 @@ def main(argv: list[str] | None = None) -> int:
             failures = [row["file"] for row in model_startup_failures(input_path, "extractor", "extraction failed")]
         not_complete_files.extend({"file": file, "status": "NOT_COMPLETE", "reason": "extractor failed",
                                    "message": name_extractor.failure_reason} for file in failures)
+
+    if args.step == "extract":
+        if source_signature(input_path, skip_roots, extra_watchlists, signature["settings"]) != signature:
+            parser.error("input changed during extraction; run extract again")
+        save_checkpoint(report_dir / "candidates.json", signature, findings,
+                        source_hashes=source_hashes, diagnostics=diagnostics,
+                        not_complete_files=not_complete_files,
+                        review_items=getattr(name_extractor, "review_items", []),
+                        comparisons=getattr(name_extractor, "comparisons", []))
+        print(f"Extracted {len(findings)} candidate spans: {report_dir / 'candidates.json'}")
+        print("Next: run the same command with --step decide.")
+        return 1 if not_complete_files else 0
 
     path_findings = find_path_names(input_path, extra_watchlists, skip_roots, approved_words)
     path_review_files = []
@@ -492,6 +514,8 @@ def build_parser() -> argparse.ArgumentParser:
             "filter name candidates before replacement prompts."
         ),
     )
+    parser.add_argument("--step", choices=("all", "extract"), default="all",
+                        help="Run a separate stage; all runs the complete pipeline (default).")
     parser.add_argument("--out-dir", type=Path, help="Folder for anonymized copies.")
     parser.add_argument("--report-dir", type=Path, help="Local reports and review answers.")
     parser.add_argument("--sample-unchanged", type=int, default=0,

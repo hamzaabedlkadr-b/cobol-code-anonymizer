@@ -52,6 +52,8 @@ def scan_path(
     progress: Callable[[str], None] | None = None,
     source_hashes: dict[str, str] | None = None,
     file_times: dict[str, float] | None = None,
+    collect_only: bool = False,
+    saved_candidates: dict[str, list[scanner.Finding]] | None = None,
 ) -> list[scanner.Finding]:
     """Run the current file pipeline while preserving the legacy output shape."""
 
@@ -99,10 +101,10 @@ def scan_path(
 
     presidio_analyzer = (
         scanner.build_presidio_analyzer(presidio_model, diag)
-        if deterministic_names_enabled and use_presidio and "NAME" in selected
+        if saved_candidates is None and deterministic_names_enabled and use_presidio and "NAME" in selected
         else None
     )
-    if deterministic_names_enabled and use_presidio and "NAME" in selected and presidio_analyzer is None:
+    if saved_candidates is None and deterministic_names_enabled and use_presidio and "NAME" in selected and presidio_analyzer is None:
         raise RuntimeError("spaCy/Presidio is unavailable; use --no-presidio to disable it")
     if progress is not None:
         detectors = sorted(selected - {"NAME"})
@@ -139,47 +141,51 @@ def scan_path(
             if source_hashes is not None:
                 source_hashes[relative_file] = source.sha256
             layout = classify_source(source, source_path=path)
-            file_findings = scanner.scan_text(
-                source.text,
-                relative_file,
-                selected,
-                name_regex,
-                roster_name_regex,
-                roster_matricula_values,
-                "all" if layout.format == PLAIN_TEXT else name_scope,
-                presidio_analyzer=presidio_analyzer,
-                name_extractor=name_extractor,
-                watchlist_pair_values=entries, pair_words=pair_words,
-                layout=layout,
-            )
-            file_findings = [replace(finding, context=marked_source_line(source.text, finding.start, finding.end))
-                             if finding.entity_type == "NAME" else finding for finding in file_findings]
-            identifier_findings = [
-                finding
-                for finding in file_findings
-                if finding.entity_type == "NAME" and (
-                    finding.source == "identifier_watchlist" or span_is_code(layout, finding.start, finding.end))
-            ]
-            for finding in identifier_findings:
-                answer = review_answers.answer_for(finding.logical_candidate or finding.text, finding.review_line or source_line(finding.context, finding.text), finding.review_key) if review_answers else None
-                row = policy_row(finding, source.sha256, code=True, answer=answer,
-                                       approved=scanner.fold_watchlist_value(finding.text) in approved_words)
-                identifier_reviews.append(row)
-                if row["policy_outcome"] == "leave_unchanged" and relative_file not in resolved_reviews:
-                    resolved_reviews.append(relative_file)
-            code_spans = {(finding.start, finding.end) for finding in identifier_findings}
-            file_findings = [finding for finding in file_findings
-                             if (finding.start, finding.end) not in code_spans or finding.entity_type != "NAME"]
-            code_hidden = [finding for finding, row in zip(identifier_findings, identifier_reviews[-len(identifier_findings):])
-                           if row["policy_outcome"] == "anonymize_whole"] if identifier_findings else []
-            file_findings = review_name_findings(
-                file_findings, file_sha256=source.sha256, name_judge=name_judge,
-                name_verifier=name_verifier, layout=layout, approved_words=approved_words,
-                verifier_enabled=verifier_enabled,
-                watchlist_words=watchlist_words,
-                review_answers=review_answers, decisions=identifier_reviews,
-            )
-            file_findings = [*code_hidden, *file_findings]
+            if saved_candidates is None:
+                file_findings = scanner.scan_text(
+                    source.text,
+                    relative_file,
+                    selected,
+                    name_regex,
+                    roster_name_regex,
+                    roster_matricula_values,
+                    "all" if layout.format == PLAIN_TEXT else name_scope,
+                    presidio_analyzer=presidio_analyzer,
+                    name_extractor=name_extractor,
+                    watchlist_pair_values=entries, pair_words=pair_words,
+                    layout=layout,
+                )
+                file_findings = [replace(finding, context=marked_source_line(source.text, finding.start, finding.end))
+                                 if finding.entity_type == "NAME" else finding for finding in file_findings]
+            else:
+                file_findings = saved_candidates[relative_file]
+            if not collect_only:
+                identifier_findings = [
+                    finding
+                    for finding in file_findings
+                    if finding.entity_type == "NAME" and (
+                        finding.source == "identifier_watchlist" or span_is_code(layout, finding.start, finding.end))
+                ]
+                for finding in identifier_findings:
+                    answer = review_answers.answer_for(finding.logical_candidate or finding.text, finding.review_line or source_line(finding.context, finding.text), finding.review_key) if review_answers else None
+                    row = policy_row(finding, source.sha256, code=True, answer=answer,
+                                           approved=scanner.fold_watchlist_value(finding.text) in approved_words)
+                    identifier_reviews.append(row)
+                    if row["policy_outcome"] == "leave_unchanged" and relative_file not in resolved_reviews:
+                        resolved_reviews.append(relative_file)
+                code_spans = {(finding.start, finding.end) for finding in identifier_findings}
+                file_findings = [finding for finding in file_findings
+                                 if (finding.start, finding.end) not in code_spans or finding.entity_type != "NAME"]
+                code_hidden = [finding for finding, row in zip(identifier_findings, identifier_reviews[-len(identifier_findings):])
+                               if row["policy_outcome"] == "anonymize_whole"] if identifier_findings else []
+                file_findings = review_name_findings(
+                    file_findings, file_sha256=source.sha256, name_judge=name_judge,
+                    name_verifier=name_verifier, layout=layout, approved_words=approved_words,
+                    verifier_enabled=verifier_enabled,
+                    watchlist_words=watchlist_words,
+                    review_answers=review_answers, decisions=identifier_reviews,
+                )
+                file_findings = [*code_hidden, *file_findings]
         except (SourceDecodingError, UnsupportedSourceEncodingError) as exc:
             reason = exc.reason
             message = f"{relative_file}: {reason}: {exc}"
@@ -229,7 +235,7 @@ def scan_path(
         if file_times is not None:
             file_times[relative_file] = time.perf_counter() - file_started
 
-    return list(resolve_overlaps(findings).selected)
+    return findings if collect_only else list(resolve_overlaps(findings).selected)
 
 
 def policy_row(
