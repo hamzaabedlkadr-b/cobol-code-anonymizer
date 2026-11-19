@@ -39,3 +39,12 @@ def load_checkpoint(path, signature):
         raise ValueError("saved stage does not match the input or detector settings; run extract again")
     payload["findings"] = [finding_from_dict(item) for item in payload["findings"]]
     return payload
+
+
+def model_state(model):
+    if model is None:
+        return None
+    fields = ("model", "calls", "chunk_calls", "canary_calls", "http_attempts", "cache_hits",
+              "latency_s", "prompt_tokens", "completion_tokens", "errors",
+              "review_items", "comparisons", "complete", "failure_reason", "chunks")
+    return {field: getattr(model, field) for field in fields if hasattr(model, field)}

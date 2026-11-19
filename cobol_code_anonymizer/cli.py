@@ -4,16 +4,19 @@ from __future__ import annotations
 
 import argparse
 import csv
+import hashlib
 import time
 from collections import Counter
+from dataclasses import asdict
 from datetime import datetime, timezone
 import re
 import sys
 import unicodedata
 from pathlib import Path
+from types import SimpleNamespace
 
 from . import __version__
-from .checkpoints import save_checkpoint, source_signature
+from .checkpoints import save_checkpoint, load_checkpoint, source_signature, model_state
 from .llm import (
     NAME_EXTRACT_MODEL,
     NAME_JUDGE_MODEL,
@@ -85,7 +88,7 @@ def main(argv: list[str] | None = None) -> int:
         )
     if output_dir.exists() and not output_dir.is_dir():
         parser.error(f"--out-dir is not a folder: {output_dir}")
-    if args.step != "extract" and output_dir.exists() and any(output_dir.iterdir()):
+    if args.step == "all" and output_dir.exists() and any(output_dir.iterdir()):
         if not args.overwrite:
             parser.error(
                 f"Output folder is not empty: {output_dir}; use --overwrite to replace it"
@@ -101,6 +104,13 @@ def main(argv: list[str] | None = None) -> int:
         "deterministic_names": args.mode != "extraction-only",
         "presidio": not args.no_presidio, "presidio_model": args.presidio_model,
     }) if args.step != "all" else None
+    saved = None
+    if args.step == "decide":
+        try:
+            saved = load_checkpoint(report_dir / "candidates.json", signature)
+        except (OSError, ValueError, TypeError, KeyError) as exc:
+            parser.error(f"cannot use saved candidates: {exc}")
+        started -= saved["elapsed_s"]
     source_hashes: dict[str, str] = {}
     file_times: dict[str, float] = {}
     diagnostics: list[str] = []
@@ -128,8 +138,9 @@ def main(argv: list[str] | None = None) -> int:
     if args.step == "all" and not (args.names_only or args.scan_only or args.create_map) and output_dir.exists():
         import shutil
         shutil.rmtree(output_dir)
+    run_extractor = args.step != "decide" and (args.name_extract or args.name_extract_model)
     requested_models = []
-    if args.name_extract or args.name_extract_model:
+    if run_extractor:
         requested_models.append(("extractor", args.name_extract_model or NAME_EXTRACT_MODEL))
     if args.step != "extract" and (args.name_judge or args.name_judge_model):
         requested_models.append(("judge", args.name_judge_model or NAME_JUDGE_MODEL))
@@ -150,8 +161,8 @@ def main(argv: list[str] | None = None) -> int:
             print(f"NOT_COMPLETE: {message}")
             return 1
 
-    name_extractor = None
-    if args.name_extract or args.name_extract_model:
+    name_extractor = SimpleNamespace(**saved["extractor"]) if saved and saved["extractor"] else None
+    if run_extractor:
         from .extractor import NameExtractor
 
         extract_model = args.name_extract_model or NAME_EXTRACT_MODEL
@@ -219,6 +230,14 @@ def main(argv: list[str] | None = None) -> int:
             print(f"File status report: {status_path}")
             return 1
 
+    saved_candidates = None
+    if saved is not None:
+        source_hashes.update(saved["source_hashes"])
+        diagnostics.extend(saved["diagnostics"])
+        not_complete_files.extend(saved["not_complete_files"])
+        saved_candidates = {file: [] for file in source_hashes}
+        for finding in saved["findings"]:
+            saved_candidates[finding.file].append(finding)
     models = (("Extractor", name_extractor), ("Judge", name_judge), ("Verifier", name_verifier))
     try:
         findings = scan_path(
@@ -245,6 +264,7 @@ def main(argv: list[str] | None = None) -> int:
             deterministic_names_enabled=args.mode != "extraction-only",
             progress=print_progress,
             collect_only=args.step == "extract",
+            saved_candidates=saved_candidates,
         )
     except RuntimeError as exc:
         end_progress()
@@ -268,8 +288,7 @@ def main(argv: list[str] | None = None) -> int:
         save_checkpoint(report_dir / "candidates.json", signature, findings,
                         source_hashes=source_hashes, diagnostics=diagnostics,
                         not_complete_files=not_complete_files,
-                        review_items=getattr(name_extractor, "review_items", []),
-                        comparisons=getattr(name_extractor, "comparisons", []))
+                        extractor=model_state(name_extractor), elapsed_s=time.perf_counter() - started)
         print(f"Extracted {len(findings)} candidate spans: {report_dir / 'candidates.json'}")
         print("Next: run the same command with --step decide.")
         return 1 if not_complete_files else 0
@@ -281,7 +300,6 @@ def main(argv: list[str] | None = None) -> int:
                             answer=review_answers.answer_for(finding.text, finding.review_line, finding.review_key))
                  for finding in path_findings]
     hidden_paths = [finding for finding, row in zip(path_findings, path_rows) if row["policy_outcome"] == "anonymize_whole"]
-    groups = group_findings([*findings, *hidden_paths])
     rows = [*identifier_review_decisions, *(name_judge.decisions if name_judge else []), *path_rows]
     redacted_spans = {}
     for item in getattr(name_extractor, "review_items", []):
@@ -293,6 +311,27 @@ def main(argv: list[str] | None = None) -> int:
                      "policy_outcome": decision.outcome, "policy_reading": decision.reading})
         if decision.outcome == "anonymize_whole":
             redacted_spans.setdefault(item["file"], []).extend(item["spans"])
+    groups = group_findings([*findings, *hidden_paths])
+    if args.step == "decide":
+        if source_signature(input_path, skip_roots, extra_watchlists, signature["settings"]) != signature:
+            parser.error("input changed during decisions; run extract again")
+        save_checkpoint(report_dir / "decisions.json", signature, findings,
+                        source_hashes=source_hashes, diagnostics=diagnostics,
+                        not_complete_files=not_complete_files, rows=rows,
+                        path_findings=[asdict(finding) for finding in path_findings],
+                        extractor=model_state(name_extractor),
+                        models={role: model_state(model) for role, model in models},
+                        elapsed_s=time.perf_counter() - started,
+                        candidate_digest=hashlib.sha256((report_dir / "candidates.json").read_bytes()).hexdigest(),
+                        approved_words=sorted(approved_words),
+                        answers={"hide": sorted(review_answers.person_lines), "show": sorted(review_answers.not_person_lines)})
+        review_rows = build_llm_name_review_rows(rows, name_extractor)
+        write_llm_name_review_csv(report_dir / "llm_name_review.csv", review_rows)
+        write_llm_name_review_text(report_dir / "llm_finding.txt", args.mode, review_rows)
+        print(f"Decisions saved: {report_dir / 'decisions.json'}")
+        print(f"Check decisions: {report_dir / 'llm_finding.txt'}")
+        print("Next: run the same command with --step write.")
+        return 1 if not_complete_files else 0
     report_dir.mkdir(parents=True, exist_ok=True)
     if args.names_only or args.scan_only or args.create_map:
         review_rows = build_llm_name_review_rows(rows, name_extractor)
@@ -514,7 +553,7 @@ def build_parser() -> argparse.ArgumentParser:
             "filter name candidates before replacement prompts."
         ),
     )
-    parser.add_argument("--step", choices=("all", "extract"), default="all",
+    parser.add_argument("--step", choices=("all", "extract", "decide"), default="all",
                         help="Run a separate stage; all runs the complete pipeline (default).")
     parser.add_argument("--out-dir", type=Path, help="Folder for anonymized copies.")
     parser.add_argument("--report-dir", type=Path, help="Local reports and review answers.")
