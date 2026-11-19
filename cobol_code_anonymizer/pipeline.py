@@ -106,7 +106,9 @@ def scan_path(
     )
     if saved_candidates is None and deterministic_names_enabled and use_presidio and "NAME" in selected and presidio_analyzer is None:
         raise RuntimeError("spaCy/Presidio is unavailable; use --no-presidio to disable it")
-    if progress is not None:
+    if progress is not None and saved_candidates is not None:
+        progress("Checking saved candidates; detectors and extraction skipped")
+    elif progress is not None:
         detectors = sorted(selected - {"NAME"})
         if deterministic_names_enabled and "NAME" in selected:
             detectors.extend(["watchlist", "watchlist pairs", "folded watchlist", "identifier watchlist"])
@@ -124,6 +126,7 @@ def scan_path(
         path
         for path in scanner.iter_text_files(input_path, skip_root=skip_root)
         if path.resolve() not in roster_paths
+        and (saved_candidates is None or scanner.relative_name(path, input_path) in saved_candidates)
     ]
 
     for index, path in enumerate(paths, start=1):

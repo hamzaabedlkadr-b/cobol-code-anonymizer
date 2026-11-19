@@ -16,7 +16,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 from . import __version__
-from .checkpoints import save_checkpoint, load_checkpoint, source_signature, model_state
+from .checkpoints import save_checkpoint, load_checkpoint, source_signature, model_state, finding_from_dict
 from .llm import (
     NAME_EXTRACT_MODEL,
     NAME_JUDGE_MODEL,
@@ -78,6 +78,8 @@ def main(argv: list[str] | None = None) -> int:
             parser.error(f"Watchlist file does not exist: {path}")
     if args.approved_words is not None and not args.approved_words.is_file():
         parser.error(f"Approved words file does not exist: {args.approved_words}")
+    if args.step != "all" and any(path.resolve() in {report_dir / "candidates.json", report_dir / "decisions.json"} for path in supplied):
+        parser.error("supplied inputs must not use the stage result paths in the report folder")
     if args.preflight:
         return run_preflight_cli(
             parser,
@@ -88,7 +90,7 @@ def main(argv: list[str] | None = None) -> int:
         )
     if output_dir.exists() and not output_dir.is_dir():
         parser.error(f"--out-dir is not a folder: {output_dir}")
-    if args.step == "all" and output_dir.exists() and any(output_dir.iterdir()):
+    if args.step in {"all", "write"} and output_dir.exists() and any(output_dir.iterdir()):
         if not args.overwrite:
             parser.error(
                 f"Output folder is not empty: {output_dir}; use --overwrite to replace it"
@@ -105,11 +107,11 @@ def main(argv: list[str] | None = None) -> int:
         "presidio": not args.no_presidio, "presidio_model": args.presidio_model,
     }) if args.step != "all" else None
     saved = None
-    if args.step == "decide":
+    if args.step in {"decide", "write"}:
         try:
-            saved = load_checkpoint(report_dir / "candidates.json", signature)
+            saved = load_checkpoint(report_dir / ("candidates.json" if args.step == "decide" else "decisions.json"), signature)
         except (OSError, ValueError, TypeError, KeyError) as exc:
-            parser.error(f"cannot use saved candidates: {exc}")
+            parser.error(f"cannot use saved {args.step} input: {exc}")
         started -= saved["elapsed_s"]
     source_hashes: dict[str, str] = {}
     file_times: dict[str, float] = {}
@@ -125,6 +127,18 @@ def main(argv: list[str] | None = None) -> int:
                                            *([args.approved_words.resolve()] if args.approved_words else []),
                                            *([args.map_file.resolve()] if args.map_file else [])])
     review_answers = load_review_decisions(report_dir / "review_decisions.csv")
+    if args.step == "write":
+        try:
+            candidate_digest = hashlib.sha256((report_dir / "candidates.json").read_bytes()).hexdigest()
+        except OSError as exc:
+            parser.error(f"cannot read saved candidates: {exc}")
+        answers = {"hide": [list(pair) for pair in sorted(review_answers.person_lines)],
+                   "show": [list(pair) for pair in sorted(review_answers.not_person_lines)]}
+        if (saved["candidate_digest"] != candidate_digest or saved["approved_words"] != sorted(approved_words)
+                or saved["answers"] != answers):
+            parser.error("candidates, approved words or review answers changed; run decide again")
+    if args.step != "all":
+        print(f"Step: {args.step}")
     print(f"Input: {input_path}   Output: {output_dir}   Reports: {report_dir}")
     print(f"Watchlist: {len(load_names(extra_watchlists, include_default=not args.no_default_name_watchlist))} words   "
           f"Approved CODE/path words: {len(approved_words)}" + (" (none supplied)" if args.approved_words is None else ""))
@@ -138,11 +152,14 @@ def main(argv: list[str] | None = None) -> int:
     if args.step == "all" and not (args.names_only or args.scan_only or args.create_map) and output_dir.exists():
         import shutil
         shutil.rmtree(output_dir)
-    run_extractor = args.step != "decide" and (args.name_extract or args.name_extract_model)
+    if args.step in {"extract", "decide"}:
+        for name in ("candidates.json", "decisions.json") if args.step == "extract" else ("decisions.json",):
+            (report_dir / name).unlink(missing_ok=True)
+    run_extractor = args.step in {"all", "extract"} and (args.name_extract or args.name_extract_model)
     requested_models = []
     if run_extractor:
         requested_models.append(("extractor", args.name_extract_model or NAME_EXTRACT_MODEL))
-    if args.step != "extract" and (args.name_judge or args.name_judge_model):
+    if args.step in {"all", "decide"} and (args.name_judge or args.name_judge_model):
         requested_models.append(("judge", args.name_judge_model or NAME_JUDGE_MODEL))
         if NAME_VERIFIER_ENABLED:
             requested_models.append(("verifier", args.name_verifier_model or NAME_VERIFIER_MODEL))
@@ -185,7 +202,7 @@ def main(argv: list[str] | None = None) -> int:
 
     name_judge = None
     name_verifier = None
-    if args.step != "extract" and (args.name_judge or args.name_judge_model):
+    if args.step in {"all", "decide"} and (args.name_judge or args.name_judge_model):
         from .judge import NameJudge
 
         judge_model = args.name_judge_model or NAME_JUDGE_MODEL
@@ -235,52 +252,57 @@ def main(argv: list[str] | None = None) -> int:
         source_hashes.update(saved["source_hashes"])
         diagnostics.extend(saved["diagnostics"])
         not_complete_files.extend(saved["not_complete_files"])
-        saved_candidates = {file: [] for file in source_hashes}
-        for finding in saved["findings"]:
-            saved_candidates[finding.file].append(finding)
+        if args.step == "decide":
+            saved_candidates = {file: [] for file in source_hashes}
+            for finding in saved["findings"]:
+                saved_candidates[finding.file].append(finding)
     models = (("Extractor", name_extractor), ("Judge", name_judge), ("Verifier", name_verifier))
-    try:
-        findings = scan_path(
-            input_path=input_path,
-            entities=entities,
-            extra_watchlists=extra_watchlists,
-            include_default_names=not args.no_default_name_watchlist,
-            name_scope=args.name_scope,
-            skip_root=skip_roots,
-            source_hashes=source_hashes,
-            file_times=file_times,
-            use_presidio=not args.no_presidio,
-            presidio_model=args.presidio_model,
-            diagnostics=diagnostics,
-            not_complete_files=not_complete_files,
-            identifier_review_decisions=identifier_review_decisions,
-            resolved_review_files=resolved_review_files,
-            review_answers=review_answers,
-            name_extractor=name_extractor,
-            name_judge=name_judge,
-            name_verifier=name_verifier,
-            approved_words=approved_words,
-            verifier_enabled=NAME_VERIFIER_ENABLED,
-            deterministic_names_enabled=args.mode != "extraction-only",
-            progress=print_progress,
-            collect_only=args.step == "extract",
-            saved_candidates=saved_candidates,
-        )
-    except RuntimeError as exc:
+    if args.step == "write":
+        findings = saved["findings"]
+        models = tuple((role, SimpleNamespace(**state) if state else None) for role, state in saved["models"].items())
+    else:
+        try:
+            findings = scan_path(
+                input_path=input_path,
+                entities=entities,
+                extra_watchlists=extra_watchlists,
+                include_default_names=not args.no_default_name_watchlist,
+                name_scope=args.name_scope,
+                skip_root=skip_roots,
+                source_hashes=source_hashes,
+                file_times=file_times,
+                use_presidio=not args.no_presidio,
+                presidio_model=args.presidio_model,
+                diagnostics=diagnostics,
+                not_complete_files=not_complete_files,
+                identifier_review_decisions=identifier_review_decisions,
+                resolved_review_files=resolved_review_files,
+                review_answers=review_answers,
+                name_extractor=name_extractor,
+                name_judge=name_judge,
+                name_verifier=name_verifier,
+                approved_words=approved_words,
+                verifier_enabled=NAME_VERIFIER_ENABLED,
+                deterministic_names_enabled=args.mode != "extraction-only",
+                progress=print_progress,
+                collect_only=args.step == "extract",
+                saved_candidates=saved_candidates,
+            )
+        except RuntimeError as exc:
+            end_progress()
+            failures = model_startup_failures(input_path, "detector", str(exc))
+            write_failure_report(report_dir, failures, input_path)
+            print(f"NOT_COMPLETE: {exc}")
+            return 1
         end_progress()
-        failures = model_startup_failures(input_path, "detector", str(exc))
-        write_failure_report(report_dir, failures, input_path)
-        print(f"NOT_COMPLETE: {exc}")
-        return 1
-    end_progress()
-    # Only extraction failures prevent a complete detection pass.
-    if name_extractor is not None and not name_extractor.complete:
-        failed_chunks = [row for row in getattr(name_extractor, "chunks", []) if row.get("status") != "ok"]
-        failures = sorted({str(row["file"]) for row in failed_chunks})
-        if not failures:
-            failures = [row["file"] for row in model_startup_failures(input_path, "extractor", "extraction failed")]
-        not_complete_files.extend({"file": file, "status": "NOT_COMPLETE", "reason": "extractor failed",
-                                   "message": name_extractor.failure_reason} for file in failures)
+        # Only extraction failures prevent a complete detection pass.
+        if name_extractor is not None and not name_extractor.complete:
+            failed_chunks = [row for row in getattr(name_extractor, "chunks", []) if row.get("status") != "ok"]
+            failures = sorted({str(row["file"]) for row in failed_chunks})
+            if not failures:
+                failures = [row["file"] for row in model_startup_failures(input_path, "extractor", "extraction failed")]
+            not_complete_files.extend({"file": file, "status": "NOT_COMPLETE", "reason": "extractor failed",
+                                       "message": name_extractor.failure_reason} for file in failures)
 
     if args.step == "extract":
         if source_signature(input_path, skip_roots, extra_watchlists, signature["settings"]) != signature:
@@ -289,20 +311,24 @@ def main(argv: list[str] | None = None) -> int:
                         source_hashes=source_hashes, diagnostics=diagnostics,
                         not_complete_files=not_complete_files,
                         extractor=model_state(name_extractor), elapsed_s=time.perf_counter() - started)
+        write_scan_summary_report(report_dir / "scan_summary.txt", args.mode, input_path, findings, diagnostics,
+                                  ["Step: extract — candidates only; output not written"])
+        write_run_stats(report_dir / "run_stats.txt", started, models, "Step: extract")
         print(f"Extracted {len(findings)} candidate spans: {report_dir / 'candidates.json'}")
         print("Next: run the same command with --step decide.")
         return 1 if not_complete_files else 0
 
-    path_findings = find_path_names(input_path, extra_watchlists, skip_roots, approved_words)
+    path_findings = ([finding_from_dict(item) for item in saved["path_findings"]] if args.step == "write"
+                     else find_path_names(input_path, extra_watchlists, skip_roots, approved_words))
     path_review_files = []
-    path_rows = [policy_row(finding, source_hashes.get(finding.file, "0" * 64), code=True,
+    path_rows = [row for row in saved["rows"] if row.get("source") == "path_watchlist"] if args.step == "write" else [policy_row(finding, source_hashes.get(finding.file, "0" * 64), code=True,
                             approved=fold_watchlist_value(finding.text) in approved_words,
                             answer=review_answers.answer_for(finding.text, finding.review_line, finding.review_key))
                  for finding in path_findings]
     hidden_paths = [finding for finding, row in zip(path_findings, path_rows) if row["policy_outcome"] == "anonymize_whole"]
-    rows = [*identifier_review_decisions, *(name_judge.decisions if name_judge else []), *path_rows]
-    redacted_spans = {}
-    for item in getattr(name_extractor, "review_items", []):
+    rows = saved["rows"] if args.step == "write" else [*identifier_review_decisions, *(name_judge.decisions if name_judge else []), *path_rows]
+    redacted_spans = saved["redacted_spans"] if args.step == "write" else {}
+    for item in [] if args.step == "write" else getattr(name_extractor, "review_items", []):
         answer = review_answers.answer_for(item["text"], item["review_line"], item["review_key"])
         decision = apply_name_policy(occurrence_id=item["review_key"].split(":", 1)[1],
                                      model_context=item["context"], judge_decision=None,
@@ -317,7 +343,7 @@ def main(argv: list[str] | None = None) -> int:
             parser.error("input changed during decisions; run extract again")
         save_checkpoint(report_dir / "decisions.json", signature, findings,
                         source_hashes=source_hashes, diagnostics=diagnostics,
-                        not_complete_files=not_complete_files, rows=rows,
+                        not_complete_files=not_complete_files, rows=rows, redacted_spans=redacted_spans,
                         path_findings=[asdict(finding) for finding in path_findings],
                         extractor=model_state(name_extractor),
                         models={role: model_state(model) for role, model in models},
@@ -328,6 +354,9 @@ def main(argv: list[str] | None = None) -> int:
         review_rows = build_llm_name_review_rows(rows, name_extractor)
         write_llm_name_review_csv(report_dir / "llm_name_review.csv", review_rows)
         write_llm_name_review_text(report_dir / "llm_finding.txt", args.mode, review_rows)
+        write_scan_summary_report(report_dir / "scan_summary.txt", args.mode, input_path, findings, diagnostics,
+                                  ["Step: decide — decisions saved; output not written"])
+        write_run_stats(report_dir / "run_stats.txt", started, models, "Step: decide")
         print(f"Decisions saved: {report_dir / 'decisions.json'}")
         print(f"Check decisions: {report_dir / 'llm_finding.txt'}")
         print("Next: run the same command with --step write.")
@@ -346,6 +375,13 @@ def main(argv: list[str] | None = None) -> int:
         write_run_stats(report_dir / "run_stats.txt", started, models, header[0])
         return 1 if not_complete_files else 0
 
+    if args.step == "write":
+        clear_previous_reports(report_dir, [input_path, *extra_watchlists,
+                                           *([args.approved_words.resolve()] if args.approved_words else []),
+                                           *([args.map_file.resolve()] if args.map_file else [])])
+        if output_dir.exists():
+            import shutil
+            shutil.rmtree(output_dir)
     replacements = choose_replacements(groups, load_mapping(args.map_file), args.salt, args.auto) if groups else {}
     aliases = {key[1]: value for key, value in replacements.items() if key[0] == "NAME"}
     path_aliases = {}
@@ -553,8 +589,8 @@ def build_parser() -> argparse.ArgumentParser:
             "filter name candidates before replacement prompts."
         ),
     )
-    parser.add_argument("--step", choices=("all", "extract", "decide"), default="all",
-                        help="Run a separate stage; all runs the complete pipeline (default).")
+    parser.add_argument("--step", choices=("all", "extract", "decide", "write"), default="all",
+                        help="extract saves candidates; decide checks saved candidates; write replaces and final-checks saved decisions. Default: all.")
     parser.add_argument("--out-dir", type=Path, help="Folder for anonymized copies.")
     parser.add_argument("--report-dir", type=Path, help="Local reports and review answers.")
     parser.add_argument("--sample-unchanged", type=int, default=0,

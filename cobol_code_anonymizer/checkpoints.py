@@ -25,6 +25,8 @@ def source_signature(input_path, skip_roots, supplied, settings):
 
 
 def save_checkpoint(path, signature, findings, **state):
+    if any(signature["files"].get(file) != digest for file, digest in state["source_hashes"].items()):
+        raise ValueError("source changed during the stage; run extract again")
     payload = {"version": 1, "signature": signature,
                "findings": [asdict(finding) for finding in findings], **state}
     path.parent.mkdir(parents=True, exist_ok=True)
