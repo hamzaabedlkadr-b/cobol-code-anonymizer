@@ -60,6 +60,7 @@ NAME_POLICY_TABLE = {
     "extraction_unresolved": ("anonymize_whole", "reported name could not be located; affected text hidden automatically"),
     "extraction_show": ("leave_unchanged", "you confirmed nothing to hide in extractor context"),
     "no_judge": ("anonymize_whole", "judge not available; hide"),
+    "model_transport_failure": ("not_complete", "model request failed; file not complete"),
     "judge_error": ("anonymize_whole", "judge answer invalid; hide"),
     "uncertain": ("anonymize_whole", "judge unsure; hide"),
     "person": ("anonymize_whole", "judge says person; hide"),
@@ -85,7 +86,7 @@ def _table_decision(*, key: str, occurrence_id: str, judge_decision: Decision | 
     outcome, reading = NAME_POLICY_TABLE[key]
     return Decision(
         occurrence_id=occurrence_id, stage="policy", outcome=outcome,
-        person_scope={"anonymize_whole": "whole", "review_required": "unsure", "leave_unchanged": "none"}[outcome],
+        person_scope={"anonymize_whole": "whole", "review_required": "unsure", "leave_unchanged": "none", "not_complete": None}[outcome],
         non_person_category=judge_decision.non_person_category if outcome == "leave_unchanged" and judge_decision else "common_word" if outcome == "leave_unchanged" else "none",
         reading=reading,
     )
@@ -106,9 +107,12 @@ def apply_name_policy(
     residual_unresolved: bool = False,
     extraction_unresolved: bool = False,
     review_answer: str | None = None,
+    model_transport_failure: bool = False,
 ) -> Decision:
     """Choose hide, show, or required review from the single table."""
 
+    if model_transport_failure:
+        return _table_decision(key="model_transport_failure", occurrence_id=occurrence_id)
     if extraction_unresolved:
         return _table_decision(key="extraction_show" if review_answer == "not_person" else "extraction_unresolved",
                                occurrence_id=occurrence_id)

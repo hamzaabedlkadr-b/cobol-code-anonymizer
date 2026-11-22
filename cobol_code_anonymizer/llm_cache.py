@@ -51,32 +51,39 @@ class PersistentResponseCache:
     def put(self, key: str, payload: dict[str, Any]) -> None:
         if self.entries.get(key) == payload:
             return
+        if self.path is not None:
+            self.path.parent.mkdir(parents=True, exist_ok=True)
+            with self.path.with_suffix(".jsonl").open("a", encoding="utf-8") as journal:
+                journal.write("\n" + json.dumps({"key": key, "value": payload}, ensure_ascii=False) + "\n")
+                journal.flush()
+                os.fsync(journal.fileno())
         self.entries[key] = dict(payload)
         self._dirty = True
 
     def _load(self) -> None:
-        if self.path is None or not self.path.is_file():
+        if self.path is None:
             return
         try:
             payload = json.loads(self.path.read_text(encoding="utf-8"))
-            if (
-                not isinstance(payload, dict)
-                or payload.get("stage") != self.stage
-                or not isinstance(payload.get("entries"), dict)
-            ):
-                return
-            self.entries = {
-                key: value
-                for key, value in payload["entries"].items()
-                if isinstance(key, str) and isinstance(value, dict)
-            }
+            if isinstance(payload, dict) and payload.get("stage") == self.stage and isinstance(payload.get("entries"), dict):
+                self.entries = {key: value for key, value in payload["entries"].items()
+                                if isinstance(key, str) and isinstance(value, dict)}
         except (OSError, json.JSONDecodeError):
-            # A local cache is an optimization. A corrupt old cache must never
-            # block the privacy pipeline or make an answer look validated.
-            self.entries = {}
+            pass
+        journal = self.path.with_suffix(".jsonl")
+        if journal.is_file():
+            with journal.open(encoding="utf-8", errors="replace") as handle:
+                for line in handle:
+                    try:
+                        entry = json.loads(line)
+                    except json.JSONDecodeError:
+                        continue
+                    if isinstance(entry, dict) and isinstance(entry.get("key"), str) and isinstance(entry.get("value"), dict):
+                        self.entries[entry["key"]] = entry["value"]
+                        self._dirty = True
 
     def flush(self) -> None:
-        """Persist validated answers at the end of a source file."""
+        """Compact the per-answer journal at the end of a source file."""
         if not self._dirty:
             return
         if self.path is None:
@@ -95,7 +102,10 @@ class PersistentResponseCache:
         try:
             with os.fdopen(file_descriptor, "w", encoding="utf-8") as temporary:
                 json.dump(payload, temporary, ensure_ascii=False, sort_keys=True)
+                temporary.flush()
+                os.fsync(temporary.fileno())
             os.replace(temporary_name, self.path)
+            self.path.with_suffix(".jsonl").unlink(missing_ok=True)
             self._dirty = False
         except OSError:
             try:

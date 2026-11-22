@@ -375,16 +375,17 @@ class NameJudge:
         progress: Callable[[str], None] | None = None,
         model_digest: str | None = None,
         cache_dir: Path | None = None,
+        transport_state: dict[str, int] | None = None,
     ) -> None:
         self.host = host
+        self.transport_state = transport_state if transport_state is not None else {}
         self.model = model
         self.model_digest = model_digest or model_reference_digest(model, host)
         self.prompt_version = JUDGE_PROMPT_VERSION
         self.timeout = timeout
         self.progress = progress
         self.decisions: list[dict[str, object]] = []
-        # Plug-in boundary failures that happen before a Decision can be
-        # constructed.  The CLI turns these into per-file NOT_COMPLETE rows.
+        # Plug-in failures become per-file NOT_COMPLETE rows in the pipeline.
         self.runtime_failures: list[dict[str, str]] = []
         self.latency_s = 0.0
         self.prompt_tokens = 0
@@ -393,7 +394,7 @@ class NameJudge:
         self.canary_calls = 0
         self.calls = 0
         self.errors = 0
-        self.transport_error = ""
+        self.transport_failures: set[str] = set()
         # Counts the one narrow retry used when a model "corrects" copied
         # source spelling. It is separate from JSON/schema retries in llm.py.
         self.person_text_retries = 0
@@ -497,27 +498,25 @@ class NameJudge:
                 True,
             )
 
-        if self.transport_error:
-            return error_decision(occurrence_id=occurrence_id, model_digest=self.model_digest,
-                                  error_message=self.transport_error), False
         result = call_ollama_json(
             self.host,
             self.model,
             messages,
             JUDGE_RESPONSE_SCHEMA,
             timeout=self.timeout,
+            transport_state=self.transport_state,
         )
         self.latency_s += result.latency_s
         self.prompt_tokens += result.prompt_tokens
         self.completion_tokens += result.completion_tokens
-        self.http_attempts += 1 + int(result.retried)
-        self.calls += 1
+        self.http_attempts += (1 + int(result.retried)) * int(result.attempted)
+        self.calls += int(result.attempted)
 
         # Fail-safe: anything that is not a clean answer becomes an error
         # Decision and is not cached, so a transient failure cannot poison
         # later decisions.
         if result.error:
-            self.transport_error = result.error
+            self.transport_failures.add(occurrence_id)
             self.errors += 1
             return (
                 error_decision(
@@ -561,14 +560,15 @@ class NameJudge:
                 ),
                 JUDGE_RESPONSE_SCHEMA,
                 timeout=self.timeout,
+                transport_state=self.transport_state,
             )
             self.latency_s += retry.latency_s
             self.prompt_tokens += retry.prompt_tokens
             self.completion_tokens += retry.completion_tokens
-            self.http_attempts += 1 + int(retry.retried)
-            self.calls += 1
+            self.http_attempts += (1 + int(retry.retried)) * int(retry.attempted)
+            self.calls += int(retry.attempted)
             if retry.error:
-                self.transport_error = retry.error
+                self.transport_failures.add(occurrence_id)
                 self.errors += 1
                 return (
                     error_decision(
@@ -625,7 +625,6 @@ class NameJudge:
     def _ask(self, context: str) -> CanaryAnswer:
         """Run one startup probe without conflating failure categories."""
 
-        self.canary_calls += 1
         span = context.split("[[", 1)[1].split("]]", 1)[0]
         result = call_ollama_json(
             self.host,
@@ -633,11 +632,13 @@ class NameJudge:
             build_messages(context, span),
             JUDGE_RESPONSE_SCHEMA,
             timeout=self.timeout,
+            transport_state=self.transport_state,
         )
+        self.canary_calls += int(result.attempted)
         self.latency_s += result.latency_s
         self.prompt_tokens += result.prompt_tokens
         self.completion_tokens += result.completion_tokens
-        self.http_attempts += 1 + int(result.retried)
+        self.http_attempts += (1 + int(result.retried)) * int(result.attempted)
         if result.error:
             return CanaryAnswer("transport", detail=result.error)
         if not result.schema_ok:

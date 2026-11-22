@@ -202,8 +202,13 @@ def scan_path(
             findings.extend(file_findings)
             if file_times is not None:
                 file_times[relative_file] = time.perf_counter() - file_started
+            rows = [*identifier_reviews[decision_start:], *getattr(name_judge, "decisions", [])[judge_start:]]
+            failure = next((row for row in rows if row["policy_outcome"] == "not_complete"), None)
+            if failure is not None:
+                incomplete.append({"file": relative_file, "status": "NOT_COMPLETE",
+                                   "reason": failure["policy_reading"],
+                                   "message": failure.get("error") or failure.get("verifier_error") or failure["policy_reading"]})
             if progress is not None:
-                rows = [*identifier_reviews[decision_start:], *getattr(name_judge, "decisions", [])[judge_start:]]
                 shown = sum(row["policy_outcome"] == "leave_unchanged" for row in rows)
                 fallbacks = sum(not review_answers or review_answers.answer_for(item["text"], item["review_line"], item["review_key"]) != "not_person"
                                 for item in getattr(name_extractor, "review_items", [])[fallback_start:])
@@ -221,8 +226,7 @@ def scan_path(
                     try:
                         cache.flush()
                     except OSError as exc:
-                        diag.append(f"Cache not saved; answers remain in memory: {exc}")
-                        cache.path = None
+                        diag.append(f"Cache compaction failed; per-answer journal retained: {exc}")
 
         incomplete.append(
             {
@@ -358,6 +362,10 @@ def review_name_findings(
                 verified = _verify_candidate(name_judge=name_judge, name_verifier=name_verifier,
                                              judge_decision=judged, occurrence_id=occurrence_id,
                                              finding=candidate, snippet=model_context)
+        gates["model_transport_failure"] = (
+            occurrence_id in getattr(name_judge, "transport_failures", ())
+            or occurrence_id in getattr(name_verifier, "transport_failures", ())
+            or any(row["file"] == finding.file for row in getattr(name_judge, "runtime_failures", ())))
         targets = [finding]
         if judged is not None and judged.outcome in {"anonymize_whole", "anonymize_part"} and judged.person_texts:
             try:
@@ -365,8 +373,8 @@ def review_name_findings(
                                                            decision=judged, layout=layout)
             except ValueError:
                 judged = None
-        hidden, pending = _apply_review_answers(targets, review_answers, decisions=audit,
-                                                file_sha256=file_sha256, layout=layout)
+        hidden, pending = ([], targets) if gates["model_transport_failure"] else _apply_review_answers(
+            targets, review_answers, decisions=audit, file_sha256=file_sha256, layout=layout)
         kept.extend(hidden)
         for target in pending:
             target_id = source_occurrence_id(target, file_sha256)
@@ -378,6 +386,11 @@ def review_name_findings(
                              verifier_decision=verified, watchlist=watchlist, approved=approved, decisions=audit)
             if decision.outcome != "leave_unchanged":
                 kept.append(target)
+        if gates["model_transport_failure"] and any(
+            getattr(model, "transport_state", {}).get("failures", 0) >= 3
+            for model in (name_judge, name_verifier)
+        ):
+            return kept
     return kept
 
 

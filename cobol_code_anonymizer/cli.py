@@ -178,6 +178,7 @@ def main(argv: list[str] | None = None) -> int:
             print(f"NOT_COMPLETE: {message}")
             return 1
 
+    transport_states = {}
     name_extractor = SimpleNamespace(**saved["extractor"]) if saved and saved["extractor"] else None
     if run_extractor:
         from .extractor import NameExtractor
@@ -189,6 +190,7 @@ def main(argv: list[str] | None = None) -> int:
             extract_host, extract_model, timeout=extract_timeout,
             chunk_lines=args.name_extract_chunk_lines,
             model_digest=model_digests[extract_model], cache_dir=report_dir,
+            transport_state=transport_states.setdefault(model_digests[extract_model], {}),
             progress=print_progress,
         )
         extract_ok, extract_reason = name_extractor.canary_ok()
@@ -215,6 +217,7 @@ def main(argv: list[str] | None = None) -> int:
             timeout=judge_timeout,
             cache_dir=report_dir,
             model_digest=judge_digest,
+            transport_state=transport_states.setdefault(judge_digest, {}),
             progress=print_progress,
         )
         judge_ok, judge_reason = name_judge.canary_ok()
@@ -232,6 +235,7 @@ def main(argv: list[str] | None = None) -> int:
                     timeout=judge_timeout,
                     cache_dir=report_dir,
                     model_digest=model_digests[verifier_model],
+                    transport_state=transport_states.setdefault(model_digests[verifier_model], {}),
                     progress=print_progress,
                 )
                 print(f"Name verifier enabled: {verifier_model} at {judge_host}")

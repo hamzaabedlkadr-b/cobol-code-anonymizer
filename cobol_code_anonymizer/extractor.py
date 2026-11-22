@@ -196,6 +196,7 @@ class NameExtractor:
         chunk_lines: int = 25,
         progress: Callable[[str], None] | None = None,
         model_digest: str = "", cache_dir: Path | None = None,
+        transport_state: dict[str, int] | None = None,
     ) -> None:
         if chunk_lines < 2:
             raise ValueError("chunk_lines must be at least 2")
@@ -205,6 +206,7 @@ class NameExtractor:
         self.cache_hits = 0
         self._response_cache = PersistentResponseCache(report_dir=cache_dir, stage="extractor")
         self.host = host
+        self.transport_state = transport_state if transport_state is not None else {}
         self.model = model
         self.timeout = timeout
         self.chunk_lines = chunk_lines
@@ -408,36 +410,15 @@ class NameExtractor:
             messages,
             EXTRACTION_SCHEMA,
             timeout=self.timeout,
+            transport_state=self.transport_state,
         )
         if canary:
-            self.canary_calls += 1
+            self.canary_calls += int(result.attempted)
         else:
-            self.chunk_calls += 1
-        attempts = 2 if result.retried else 1
+            self.chunk_calls += int(result.attempted)
+        attempts = (1 + int(result.retried)) * int(result.attempted)
         self.http_attempts += attempts
-        self.retries += attempts - 1 + bool(retry_texts)
-        if result.error:
-            retry = call_ollama_json(
-                self.host,
-                self.model,
-                messages,
-                EXTRACTION_SCHEMA,
-                timeout=self.timeout,
-            )
-            if canary:
-                self.canary_calls += 1
-            else:
-                self.chunk_calls += 1
-            retry_attempts = 2 if retry.retried else 1
-            self.http_attempts += retry_attempts
-            self.retries += retry_attempts
-            result = replace(
-                retry,
-                latency_s=result.latency_s + retry.latency_s,
-                prompt_tokens=result.prompt_tokens + retry.prompt_tokens,
-                completion_tokens=result.completion_tokens + retry.completion_tokens,
-                retried=True,
-            )
+        self.retries += int(result.retried) + bool(retry_texts) if result.attempted else 0
         self.latency_s += result.latency_s
         self.prompt_tokens += result.prompt_tokens
         self.completion_tokens += result.completion_tokens

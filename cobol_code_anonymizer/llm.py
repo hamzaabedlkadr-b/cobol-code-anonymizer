@@ -3,9 +3,8 @@
 from __future__ import annotations
 
 import json
-import socket
+import http.client
 import time
-import urllib.error
 import urllib.request
 from dataclasses import dataclass
 from typing import Any
@@ -54,6 +53,7 @@ class LlmJsonResult:
     retried: bool = False
     prompt_tokens: int = 0
     completion_tokens: int = 0
+    attempted: bool = True
 
 
 def call_ollama_json(
@@ -63,16 +63,16 @@ def call_ollama_json(
     schema: dict[str, Any],
     timeout: float = 60.0,
     options: dict[str, Any] | None = None,
-    retry_schema_failures: int = 1,
+    retry_failures: int = 1,
+    transport_state: dict[str, int] | None = None,
 ) -> LlmJsonResult:
-    """Call Ollama's chat endpoint and validate the returned JSON object.
-
-    Transport errors are returned in the result instead of raised so callers can
-    conservatively keep deterministic scanner output when the LLM is unavailable.
-    """
+    """Call Ollama with one retry budget for transport and schema failures."""
+    if transport_state is not None and transport_state.get("failures", 0) >= 3:
+        return LlmJsonResult(None, "", 0.0, False,
+                             error="model stopped after 3 consecutive transport failures", attempted=False)
     result = _call_ollama_json_once(host, model, messages, schema, timeout, options)
-    retries_left = retry_schema_failures
-    while not result.error and not result.schema_ok and retries_left > 0:
+    retries_left = retry_failures
+    while (result.error or not result.schema_ok) and retries_left > 0:
         retry = _call_ollama_json_once(host, model, messages, schema, timeout, options)
         result = LlmJsonResult(
             parsed=retry.parsed,
@@ -85,6 +85,8 @@ def call_ollama_json(
             completion_tokens=result.completion_tokens + retry.completion_tokens,
         )
         retries_left -= 1
+    if transport_state is not None:
+        transport_state["failures"] = transport_state.get("failures", 0) + 1 if result.error else 0
     return result
 
 
@@ -114,7 +116,9 @@ def _call_ollama_json_once(
     try:
         with urllib.request.urlopen(request, timeout=timeout) as response:
             raw = json.loads(response.read().decode("utf-8"))
-    except (json.JSONDecodeError, TimeoutError, socket.timeout, urllib.error.URLError) as exc:
+    except (json.JSONDecodeError, UnicodeDecodeError):
+        return LlmJsonResult(None, "", time.monotonic() - start, False)
+    except (OSError, http.client.HTTPException) as exc:
         return LlmJsonResult(
             parsed=None,
             content="",
@@ -129,12 +133,11 @@ def _call_ollama_json_once(
             content="",
             latency_s=time.monotonic() - start,
             schema_ok=False,
-            error="unexpected response shape",
         )
 
     message = raw.get("message")
     content = message.get("content", "") if isinstance(message, dict) else ""
-    parsed, schema_ok = validate_json_content(content, schema)
+    parsed, schema_ok = validate_json_content(content if isinstance(content, str) else "", schema)
     return LlmJsonResult(
         parsed=parsed,
         content=content,

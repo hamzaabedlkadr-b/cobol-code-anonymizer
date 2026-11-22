@@ -113,8 +113,10 @@ class NameVerifier:
         progress: Callable[[str], None] | None = None,
         model_digest: str | None = None,
         cache_dir: Path | None = None,
+        transport_state: dict[str, int] | None = None,
     ) -> None:
         self.host = host
+        self.transport_state = transport_state if transport_state is not None else {}
         self.model = model
         self.timeout = timeout
         self.progress = progress
@@ -126,7 +128,7 @@ class NameVerifier:
         self.canary_calls = 0
         self.calls = 0
         self.errors = 0
-        self.transport_error = ""
+        self.transport_failures: set[str] = set()
         self.cache_hits = 0
         self._response_cache = PersistentResponseCache(
             report_dir=cache_dir,
@@ -164,23 +166,21 @@ class NameVerifier:
                 # A cache entry is written only after validation. If a local
                 # report was edited or corrupted, ignore it and call the model.
                 self._response_cache.entries.pop(key, None)
-        if self.transport_error:
-            return error_decision(occurrence_id=occurrence_id, model_digest=self.model_digest,
-                                  error_message=self.transport_error)
         result = call_ollama_json(
             self.host,
             self.model,
             messages,
             VERIFIER_RESPONSE_SCHEMA,
             timeout=self.timeout,
+            transport_state=self.transport_state,
         )
         self.latency_s += result.latency_s
         self.prompt_tokens += result.prompt_tokens
         self.completion_tokens += result.completion_tokens
-        self.http_attempts += 1 + int(result.retried)
-        self.calls += 1
+        self.http_attempts += (1 + int(result.retried)) * int(result.attempted)
+        self.calls += int(result.attempted)
         if result.error:
-            self.transport_error = result.error
+            self.transport_failures.add(occurrence_id)
             self.errors += 1
             return error_decision(
                 occurrence_id=occurrence_id,
