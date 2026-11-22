@@ -46,7 +46,7 @@ from .scanner import (
 
 
 def main(argv: list[str] | None = None) -> int:
-    started = time.perf_counter()
+    started = step_started = time.perf_counter()
     parser = build_parser()
     raw_args = list(argv) if argv is not None else sys.argv[1:]
     args = parser.parse_args(raw_args)
@@ -325,7 +325,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.step == "extract":
         write_scan_summary_report(report_dir / "scan_summary.txt", args.mode, input_path, findings, diagnostics,
                                   ["Step: extract — candidates only; output not written"])
-        write_run_stats(report_dir / "run_stats.txt", started, models, "Step: extract")
+        write_run_stats(report_dir / "run_stats.txt", started, models, "Step: extract", step_started=step_started)
         print(f"CODE identifiers: {len(code_identifiers)} distinct; at most {2 * len(code_identifiers)} judge/verifier requests before cache/retries")
         print(f"Extracted {len(findings)} candidate spans: {report_dir / 'candidates.json'}")
         print("Next: run the same command with --step decide.")
@@ -385,7 +385,7 @@ def main(argv: list[str] | None = None) -> int:
         write_llm_name_review_text(report_dir / "llm_finding.txt", args.mode, review_rows)
         write_scan_summary_report(report_dir / "scan_summary.txt", args.mode, input_path, findings, diagnostics,
                                   ["Step: decide — decisions saved; output not written"])
-        write_run_stats(report_dir / "run_stats.txt", started, models, "Step: decide")
+        write_run_stats(report_dir / "run_stats.txt", started, models, "Step: decide", step_started=step_started)
         print(f"Decisions saved: {report_dir / 'decisions.json'}")
         print(f"Check decisions: {report_dir / 'llm_finding.txt'}")
         print("Next: run the same command with --step write.")
@@ -401,7 +401,7 @@ def main(argv: list[str] | None = None) -> int:
         print("\n".join(header))
         print(f"Mode: {args.mode}")
         print_scan_summary(input_path, findings, groups)
-        write_run_stats(report_dir / "run_stats.txt", started, models, header[0])
+        write_run_stats(report_dir / "run_stats.txt", started, models, header[0], step_started=step_started)
         return 1 if not_complete_files else 0
 
     if args.step == "write":
@@ -511,7 +511,7 @@ def main(argv: list[str] | None = None) -> int:
     print("\n".join(header))
     print(f"Mode: {args.mode}")
     print_scan_summary(input_path, findings, groups)
-    write_run_stats(report_dir / "run_stats.txt", started, models, header[0])
+    write_run_stats(report_dir / "run_stats.txt", started, models, header[0], step_started=step_started)
     return 1 if review_files or failures else 0
 
 
@@ -550,11 +550,15 @@ def write_failure_report(report_dir, failures, input_path):
     return path
 
 
-def write_run_stats(path: Path, started: float, models, result: str) -> None:
+def write_run_stats(path: Path, started: float, models, result: str, *, step_started: float | None = None) -> None:
     """Write batch timing and reported model usage without source text."""
-    elapsed = time.perf_counter() - started
+    finished = time.perf_counter()
+    elapsed = finished - started
+    step_elapsed = finished - (step_started if step_started is not None else started)
+    print(f"Step time: {step_elapsed:.1f} s   Cumulative time: {elapsed:.1f} s")
     lines = ["Run statistics", f"Finished (UTC): {datetime.now(timezone.utc).isoformat(timespec='seconds')}",
-             f"Duration: {elapsed / 3600:.2f} h ({elapsed:.1f} s)", result,
+             f"Duration: {elapsed / 3600:.2f} h ({elapsed:.1f} s; cumulative)",
+             f"Step duration: {step_elapsed / 3600:.2f} h ({step_elapsed:.1f} s)", result,
              "Model time and tokens include startup checks and retries.",
              "Tokens are reported by Ollama; missing counts are zero. Cache hits use no new tokens."]
     input_tokens = output_tokens = 0
