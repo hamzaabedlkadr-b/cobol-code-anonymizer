@@ -102,6 +102,7 @@ def main(argv: list[str] | None = None) -> int:
     approved_words = frozenset(fold_watchlist_value(word) for word in
                               load_names([args.approved_words] if args.approved_words else [], include_default=False))
     skip_roots = [output_dir, report_dir, *[path.resolve() for path in (args.approved_words, args.map_file) if path]]
+    inventory = input_inventory(input_path, skip_roots, extra_watchlists)
     signature = source_signature(input_path, skip_roots, extra_watchlists, {
         "entities": sorted(entities), "name_scope": args.name_scope,
         "deterministic_names": args.mode != "extraction-only",
@@ -324,7 +325,7 @@ def main(argv: list[str] | None = None) -> int:
                         elapsed_s=time.perf_counter() - started)
     if args.step == "extract":
         write_scan_summary_report(report_dir / "scan_summary.txt", args.mode, input_path, findings, diagnostics,
-                                  ["Step: extract — candidates only; output not written"])
+                                  ["Step: extract — candidates only; output not written"], inventory=inventory)
         write_run_stats(report_dir / "run_stats.txt", started, models, "Step: extract", step_started=step_started)
         print(f"CODE identifiers: {len(code_identifiers)} distinct; at most {2 * len(code_identifiers)} judge/verifier requests before cache/retries")
         print(f"Extracted {len(findings)} candidate spans: {report_dir / 'candidates.json'}")
@@ -384,7 +385,7 @@ def main(argv: list[str] | None = None) -> int:
         write_llm_name_review_csv(report_dir / "llm_name_review.csv", review_rows)
         write_llm_name_review_text(report_dir / "llm_finding.txt", args.mode, review_rows)
         write_scan_summary_report(report_dir / "scan_summary.txt", args.mode, input_path, findings, diagnostics,
-                                  ["Step: decide — decisions saved; output not written"])
+                                  ["Step: decide — decisions saved; output not written"], inventory=inventory)
         write_run_stats(report_dir / "run_stats.txt", started, models, "Step: decide", step_started=step_started)
         print(f"Decisions saved: {report_dir / 'decisions.json'}")
         print(f"Check decisions: {report_dir / 'llm_finding.txt'}")
@@ -397,10 +398,10 @@ def main(argv: list[str] | None = None) -> int:
         write_llm_name_review_text(report_dir / "llm_finding.txt", args.mode, review_rows)
         write_mapping_template(report_dir / (args.create_map.name if args.create_map else "replacement_map.csv"), groups, load_mapping(args.map_file) or None, args.salt)
         header = [f"Result: released 0, withheld 0, not complete {len({row['file'] for row in not_complete_files})}", "Sample: not prepared (scan only)"]
-        write_scan_summary_report(report_dir / "scan_summary.txt", args.mode, input_path, findings, diagnostics, header)
+        write_scan_summary_report(report_dir / "scan_summary.txt", args.mode, input_path, findings, diagnostics, header, inventory=inventory)
         print("\n".join(header))
         print(f"Mode: {args.mode}")
-        print_scan_summary(input_path, findings, groups)
+        print_scan_summary(input_path, findings, groups, inventory=inventory)
         write_run_stats(report_dir / "run_stats.txt", started, models, header[0], step_started=step_started)
         return 1 if not_complete_files else 0
 
@@ -507,10 +508,10 @@ def main(argv: list[str] | None = None) -> int:
     header.append(f"Sample: {len(samples)} lines in sample_check.txt" + (" (withheld copy)" if samples[0].get("kind") == "withheld copy" else "") if samples else "Sample: not prepared (no released files)" if not released else "Sample: not prepared (use --sample-unchanged)")
     if review_files:
         header.append("needs_review/ contains complete withheld copies; review the REVIEW rows in llm_name_review.csv.")
-    write_scan_summary_report(report_dir / "scan_summary.txt", args.mode, input_path, findings, diagnostics, header)
+    write_scan_summary_report(report_dir / "scan_summary.txt", args.mode, input_path, findings, diagnostics, header, inventory=inventory)
     print("\n".join(header))
     print(f"Mode: {args.mode}")
-    print_scan_summary(input_path, findings, groups)
+    print_scan_summary(input_path, findings, groups, inventory=inventory)
     write_run_stats(report_dir / "run_stats.txt", started, models, header[0], step_started=step_started)
     return 1 if review_files or failures else 0
 
@@ -812,7 +813,7 @@ def run_preflight_cli(
 
     write_frequent_words(report_dir / "frequent_words.csv", counts)
     report_path = report_dir / "preflight.txt"
-    report = counts.report_text()
+    report = counts.report_text() + "\n".join(input_inventory(input_path, skip_roots, args.watchlist)) + "\n"
     report_path.write_text(report, encoding="utf-8")
     print(report, end="")
     print(f"preflight_report={report_path}")
@@ -964,9 +965,29 @@ def group_findings_for_summary(findings: list[Finding]) -> list[ValueGroup]:
         key=lambda group: (entity_sort_order(group.entity_type), group.original.upper()),
     )
 
-def print_scan_summary(input_path: Path, findings: list[Finding], groups: list[ValueGroup]) -> None:
+def input_inventory(input_path, skip_roots, supplied):
+    """Count selected files and explain extension/watchlist exclusions."""
+    extensions, skipped = Counter(), Counter()
+    supplied = {path.resolve() for path in supplied}
+    selected = 0
+    for path in iter_all_files(input_path, skip_root=skip_roots):
+        extensions[path.suffix.lower() or "(no extension)"] += 1
+        if path.resolve() in supplied:
+            skipped["supplied watchlist"] += 1
+        elif not is_text_candidate(path):
+            skipped["unsupported extension"] += 1
+        else:
+            selected += 1
+    return [f"Input files: {sum(extensions.values())}; selected: {selected}; skipped: {sum(skipped.values())} (output/report folders excluded)",
+            "Extensions: " + ", ".join(f"{extension}={count}" for extension, count in sorted(extensions.items())),
+            *[f"Skipped: {reason}={count}" for reason, count in sorted(skipped.items())]]
+
+
+def print_scan_summary(input_path: Path, findings: list[Finding], groups: list[ValueGroup], *, inventory=()) -> None:
     print(f"Input: {input_path}")
     print(f"Findings: {len(findings)}")
+    if inventory:
+        print("\n".join(inventory))
     display_groups = group_findings_for_summary(findings)
     if not display_groups:
         return
@@ -985,11 +1006,12 @@ def write_scan_summary_report(
     findings: list[Finding],
     diagnostics: list[str],
     header=(),
+    *, inventory=(),
 ) -> None:
     """Write the terminal-style grouped findings summary as a text file."""
     lines = [*header, f"Mode: {mode}"]
     lines.extend(f"Warning: {message}" for message in diagnostics)
-    lines.extend([f"Input: {input_path}", f"Findings: {len(findings)}"])
+    lines.extend([f"Input: {input_path}", f"Findings: {len(findings)}", *inventory])
 
     current_entity = ""
     for index, group in enumerate(group_findings_for_summary(findings), start=1):
