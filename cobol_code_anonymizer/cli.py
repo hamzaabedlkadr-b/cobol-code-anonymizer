@@ -55,6 +55,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.sample_unchanged < 0:
         parser.error("--sample-unchanged must be zero or greater")
     apply_mode_preset(args, raw_args)
+    full_run = args.step == "all" and not (args.names_only or args.scan_only or args.create_map)
     input_path = args.input.resolve()
     if not input_path.exists():
         parser.error(f"Input path does not exist: {input_path}")
@@ -78,7 +79,7 @@ def main(argv: list[str] | None = None) -> int:
             parser.error(f"Watchlist file does not exist: {path}")
     if args.approved_words is not None and not args.approved_words.is_file():
         parser.error(f"Approved words file does not exist: {args.approved_words}")
-    if args.step != "all" and any(path.resolve() in {report_dir / "candidates.json", report_dir / "decisions.json"} for path in supplied):
+    if any(path.resolve() in {report_dir / "candidates.json", report_dir / "decisions.json"} for path in supplied):
         parser.error("supplied inputs must not use the stage result paths in the report folder")
     if args.preflight:
         return run_preflight_cli(
@@ -105,7 +106,7 @@ def main(argv: list[str] | None = None) -> int:
         "entities": sorted(entities), "name_scope": args.name_scope,
         "deterministic_names": args.mode != "extraction-only",
         "presidio": not args.no_presidio, "presidio_model": args.presidio_model,
-    }) if args.step != "all" else None
+    })
     saved = None
     if args.step in {"decide", "write"}:
         try:
@@ -152,8 +153,8 @@ def main(argv: list[str] | None = None) -> int:
     if args.step == "all" and not (args.names_only or args.scan_only or args.create_map) and output_dir.exists():
         import shutil
         shutil.rmtree(output_dir)
-    if args.step in {"extract", "decide"}:
-        for name in ("candidates.json", "decisions.json") if args.step == "extract" else ("decisions.json",):
+    if args.step in {"all", "extract", "decide"}:
+        for name in ("candidates.json", "decisions.json") if args.step != "decide" else ("decisions.json",):
             (report_dir / name).unlink(missing_ok=True)
     run_extractor = args.step in {"all", "extract"} and (args.name_extract or args.name_extract_model)
     requested_models = []
@@ -266,7 +267,7 @@ def main(argv: list[str] | None = None) -> int:
         models = tuple((role, SimpleNamespace(**state) if state else None) for role, state in saved["models"].items())
     else:
         try:
-            findings = scan_path(
+            scan_options = dict(
                 input_path=input_path,
                 entities=entities,
                 extra_watchlists=extra_watchlists,
@@ -289,9 +290,9 @@ def main(argv: list[str] | None = None) -> int:
                 verifier_enabled=NAME_VERIFIER_ENABLED,
                 deterministic_names_enabled=args.mode != "extraction-only",
                 progress=print_progress,
-                collect_only=args.step == "extract",
-                saved_candidates=saved_candidates,
             )
+            findings = scan_path(**scan_options, collect_only=full_run or args.step == "extract",
+                                 saved_candidates=saved_candidates)
         except RuntimeError as exc:
             end_progress()
             failures = model_startup_failures(input_path, "detector", str(exc))
@@ -308,19 +309,32 @@ def main(argv: list[str] | None = None) -> int:
             not_complete_files.extend({"file": file, "status": "NOT_COMPLETE", "reason": "extractor failed",
                                        "message": name_extractor.failure_reason} for file in failures)
 
-    if args.step == "extract":
+    if full_run or args.step == "extract":
         if source_signature(input_path, skip_roots, extra_watchlists, signature["settings"]) != signature:
             parser.error("input changed during extraction; run extract again")
         save_checkpoint(report_dir / "candidates.json", signature, findings,
                         source_hashes=source_hashes, diagnostics=diagnostics,
                         not_complete_files=not_complete_files,
                         extractor=model_state(name_extractor), elapsed_s=time.perf_counter() - started)
+    if args.step == "extract":
         write_scan_summary_report(report_dir / "scan_summary.txt", args.mode, input_path, findings, diagnostics,
                                   ["Step: extract — candidates only; output not written"])
         write_run_stats(report_dir / "run_stats.txt", started, models, "Step: extract")
         print(f"Extracted {len(findings)} candidate spans: {report_dir / 'candidates.json'}")
         print("Next: run the same command with --step decide.")
         return 1 if not_complete_files else 0
+
+    if full_run:
+        saved_candidates = {file: [] for file in source_hashes}
+        for finding in findings:
+            saved_candidates[finding.file].append(finding)
+        try:
+            findings = scan_path(**scan_options, saved_candidates=saved_candidates)
+        except RuntimeError as exc:
+            end_progress()
+            write_failure_report(report_dir, model_startup_failures(input_path, "detector", str(exc)), input_path)
+            return 1
+        end_progress()
 
     path_findings = ([finding_from_dict(item) for item in saved["path_findings"]] if args.step == "write"
                      else find_path_names(input_path, extra_watchlists, skip_roots, approved_words))
@@ -342,7 +356,7 @@ def main(argv: list[str] | None = None) -> int:
         if decision.outcome == "anonymize_whole":
             redacted_spans.setdefault(item["file"], []).extend(item["spans"])
     groups = group_findings([*findings, *hidden_paths])
-    if args.step == "decide":
+    if full_run or args.step == "decide":
         if source_signature(input_path, skip_roots, extra_watchlists, signature["settings"]) != signature:
             parser.error("input changed during decisions; run extract again")
         save_checkpoint(report_dir / "decisions.json", signature, findings,
@@ -355,6 +369,7 @@ def main(argv: list[str] | None = None) -> int:
                         candidate_digest=hashlib.sha256((report_dir / "candidates.json").read_bytes()).hexdigest(),
                         approved_words=sorted(approved_words),
                         answers={"hide": sorted(review_answers.person_lines), "show": sorted(review_answers.not_person_lines)})
+    if args.step == "decide":
         review_rows = build_llm_name_review_rows(rows, name_extractor)
         write_llm_name_review_csv(report_dir / "llm_name_review.csv", review_rows)
         write_llm_name_review_text(report_dir / "llm_finding.txt", args.mode, review_rows)
