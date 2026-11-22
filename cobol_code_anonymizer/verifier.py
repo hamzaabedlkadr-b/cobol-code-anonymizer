@@ -47,12 +47,14 @@ Examples:
 
 
 def build_messages(
-    *, context: str, candidate: str
+    *, context: str, candidate: str, code_identifier: bool = False,
 ) -> list[dict[str, str]]:
     """Build a blinded verifier request without including the judge answer."""
 
     return [
-        {"role": "system", "content": SYSTEM_PROMPT},
+        {"role": "system", "content": SYSTEM_PROMPT + ("\nThis is a CODE identifier review. Check all examples. "
+         "Return not_person only if every example clearly uses all its parts as ordinary words. "
+         "A person-name part means person; code syntax alone is not proof." if code_identifier else "")},
         {"role": "user", "content": name_model_input(context, candidate)},
     ]
 
@@ -142,12 +144,13 @@ class NameVerifier:
         occurrence_id: str,
         candidate: str,
         context: str,
+        code_identifier: bool = False,
     ) -> Decision:
         """Return a validated verifier Decision; failures become ``error``."""
 
         if self.progress is not None:
             self.progress("[LLM verifier] reviewing proposed non-person candidate")
-        messages = build_messages(context=context, candidate=candidate)
+        messages = build_messages(context=context, candidate=candidate, code_identifier=code_identifier)
         key = response_cache_key(
             stage="verifier", messages=messages, schema=VERIFIER_RESPONSE_SCHEMA,
             options={"temperature": 0}, model_digest=self.model_digest,

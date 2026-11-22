@@ -48,6 +48,27 @@ def span_is_code(layout, start: int, end: int) -> bool:
     return False
 
 
+def code_identifier_span(layout, start: int, end: int):
+    """Find the complete CODE token; fixed-format metadata is not an identifier."""
+    index = max(0, bisect_right(layout.region_starts, start) - 1)
+    region = layout.regions[index]
+    if region.kind != "code" or end > region.decoded_end:
+        return None
+    text = layout.source.text
+    left, right = start, end
+    while left > region.decoded_start and (text[left - 1].isalnum() or text[left - 1] in "_-"):
+        left -= 1
+    while right < region.decoded_end and (text[right].isalnum() or text[right] in "_-"):
+        right += 1
+    token = text[left:right]
+    if not token or not all(char.isalnum() or char in "_-" for char in token) or not any(char.isalpha() for char in token):
+        return None
+    if layout.format == "fixed_cobol" and (region.column + left - region.decoded_start < 8 or
+                                           region.column + right - region.decoded_start > 73):
+        return None
+    return left, right
+
+
 def normalize_evidence_text(value: str) -> str:
     """Remove prompt markers and collapse whitespace for quote comparison."""
 

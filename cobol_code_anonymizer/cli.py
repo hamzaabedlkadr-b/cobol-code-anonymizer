@@ -27,10 +27,10 @@ from .llm import (
     load_model_digests,
 )
 from .replacements import ValueGroup, apply_replacements, copy_file_atomically, group_findings, group_key, entity_sort_order, finding_key, load_mapping, suggested_replacement, replacement_spans, write_mapping_template
-from .pipeline import scan_path, policy_row
+from .pipeline import scan_path, policy_row, review_code_identifiers
 from .preflight import run_preflight, write_frequent_words
 from .review_queue import build_llm_name_review_rows, write_llm_name_review_csv
-from .review_decisions import import_review_answers, load_review_decisions, folded_word, source_line
+from .review_decisions import load_identifier_answers, import_review_answers, load_review_decisions, folded_word, source_line
 from .residual import scan_written_output
 from .policy import apply_name_policy, NAME_POLICY_TABLE
 from .text_matching import name_word_spans, source_occurrence_id, IDENTIFIER_PART_RE, physical_replacement, review_key
@@ -114,6 +114,8 @@ def main(argv: list[str] | None = None) -> int:
         except (OSError, ValueError, TypeError, KeyError) as exc:
             parser.error(f"cannot use saved {args.step} input: {exc}")
         started -= saved["elapsed_s"]
+    identifier_answers = load_identifier_answers(report_dir / "code_identifiers.csv")
+    code_identifiers = saved.get("code_identifiers", {}) if saved else {}
     source_hashes: dict[str, str] = {}
     file_times: dict[str, float] = {}
     diagnostics: list[str] = []
@@ -136,8 +138,8 @@ def main(argv: list[str] | None = None) -> int:
         answers = {"hide": [list(pair) for pair in sorted(review_answers.person_lines)],
                    "show": [list(pair) for pair in sorted(review_answers.not_person_lines)]}
         if (saved["candidate_digest"] != candidate_digest or saved["approved_words"] != sorted(approved_words)
-                or saved["answers"] != answers):
-            parser.error("candidates, approved words or review answers changed; run decide again")
+                or saved["answers"] != answers or saved.get("identifier_answers", {}) != identifier_answers):
+            parser.error("candidates, approved words, identifier overrides or review answers changed; run decide again")
     if args.step != "all":
         print(f"Step: {args.step}")
     print(f"Input: {input_path}   Output: {output_dir}   Reports: {report_dir}")
@@ -291,8 +293,11 @@ def main(argv: list[str] | None = None) -> int:
                 deterministic_names_enabled=args.mode != "extraction-only",
                 progress=print_progress,
             )
+            checks = review_code_identifiers(code_identifiers, name_judge, name_verifier,
+                       report_dir / "code_identifiers.csv", identifier_answers, NAME_VERIFIER_ENABLED) if args.step == "decide" and name_judge else {}
             findings = scan_path(**scan_options, collect_only=full_run or args.step == "extract",
-                                 saved_candidates=saved_candidates)
+                                 saved_candidates=saved_candidates, code_identifiers=code_identifiers,
+                                 identifier_checks=checks)
         except RuntimeError as exc:
             end_progress()
             failures = model_startup_failures(input_path, "detector", str(exc))
@@ -315,11 +320,13 @@ def main(argv: list[str] | None = None) -> int:
         save_checkpoint(report_dir / "candidates.json", signature, findings,
                         source_hashes=source_hashes, diagnostics=diagnostics,
                         not_complete_files=not_complete_files,
-                        extractor=model_state(name_extractor), elapsed_s=time.perf_counter() - started)
+                        extractor=model_state(name_extractor), code_identifiers=code_identifiers,
+                        elapsed_s=time.perf_counter() - started)
     if args.step == "extract":
         write_scan_summary_report(report_dir / "scan_summary.txt", args.mode, input_path, findings, diagnostics,
                                   ["Step: extract — candidates only; output not written"])
         write_run_stats(report_dir / "run_stats.txt", started, models, "Step: extract")
+        print(f"CODE identifiers: {len(code_identifiers)} distinct; at most {2 * len(code_identifiers)} judge/verifier requests before cache/retries")
         print(f"Extracted {len(findings)} candidate spans: {report_dir / 'candidates.json'}")
         print("Next: run the same command with --step decide.")
         return 1 if not_complete_files else 0
@@ -329,7 +336,9 @@ def main(argv: list[str] | None = None) -> int:
         for finding in findings:
             saved_candidates[finding.file].append(finding)
         try:
-            findings = scan_path(**scan_options, saved_candidates=saved_candidates)
+            checks = review_code_identifiers(code_identifiers, name_judge, name_verifier,
+                       report_dir / "code_identifiers.csv", identifier_answers, NAME_VERIFIER_ENABLED) if name_judge else {}
+            findings = scan_path(**scan_options, saved_candidates=saved_candidates, identifier_checks=checks)
         except RuntimeError as exc:
             end_progress()
             write_failure_report(report_dir, model_startup_failures(input_path, "detector", str(exc)), input_path)
@@ -367,7 +376,8 @@ def main(argv: list[str] | None = None) -> int:
                         models={role: model_state(model) for role, model in models},
                         elapsed_s=time.perf_counter() - started,
                         candidate_digest=hashlib.sha256((report_dir / "candidates.json").read_bytes()).hexdigest(),
-                        approved_words=sorted(approved_words),
+                        approved_words=sorted(approved_words), identifier_answers=identifier_answers,
+                        code_identifiers=code_identifiers,
                         answers={"hide": sorted(review_answers.person_lines), "show": sorted(review_answers.not_person_lines)})
     if args.step == "decide":
         review_rows = build_llm_name_review_rows(rows, name_extractor)

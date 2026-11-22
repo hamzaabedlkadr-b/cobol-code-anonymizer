@@ -19,6 +19,16 @@ from .scanner import fold_watchlist_value
 FIELDNAMES = ("word", "line", "answer", "date", "key")
 
 
+def load_identifier_answers(path: Path) -> dict[str, str]:
+    """Read explicit CODE-only overrides from the identifier report."""
+    if not path.is_file():
+        return {}
+    with path.open(newline="", encoding="utf-8") as handle:
+        return {row["identifier"].upper(): row["answer"].strip().lower()
+                for row in csv.DictReader(handle)
+                if row.get("identifier") and row.get("answer", "").strip().lower() in {"hide", "show"}}
+
+
 def folded_word(value: str) -> str:
     """Normalize a queue word exactly as watchlist matching does."""
 

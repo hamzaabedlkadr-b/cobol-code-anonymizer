@@ -51,6 +51,8 @@ NAME_POLICY_TABLE = {
     "review_show": ("leave_unchanged", "reviewer says not a name; show"),
     "code_hide": ("anonymize_whole", "watchlist part in code or path; hide"),
     "code_show": ("leave_unchanged", "approved part in code or path; show"),
+    "identifier_show": ("leave_unchanged", "judge and verifier say exact identifier is ordinary; show"),
+    "identifier_hide": ("anonymize_whole", "exact identifier not confirmed ordinary; hide"),
     "watchlist_pair": ("anonymize_whole", "adjacent watchlist words; hide"),
     "watchlist_full_name": ("anonymize_whole", "multi-word watchlist entry; hide"),
     "watchlist": ("anonymize_whole", "verification disabled; hide"),
@@ -109,6 +111,7 @@ def apply_name_policy(
     review_answer: str | None = None,
     model_transport_failure: bool = False,
     instruction_context: str = "",
+    identifier_checked: bool = False,
 ) -> Decision:
     """Choose hide, show, or required review from the single table."""
 
@@ -135,6 +138,11 @@ def apply_name_policy(
             raise ValueError("verifier_decision refers to a different occurrence")
 
     if code_sensitive_identifier:
+        if identifier_checked and not approved_word:
+            ordinary = (verifier_enabled and judge_decision is not None and
+                        judge_decision.outcome == "propose_unchanged" and verifier_decision is not None and
+                        verifier_decision.outcome == "not_person")
+            return _table_decision(key="identifier_show" if ordinary else "identifier_hide", occurrence_id=occurrence_id)
         return _table_decision(key="code_show" if approved_word else "code_hide", occurrence_id=occurrence_id)
     if watchlist_full_name:
         return _table_decision(key="watchlist_full_name", occurrence_id=occurrence_id)

@@ -304,9 +304,11 @@ def error_decision(
     )
 
 
-def build_messages(context: str, span: str) -> list[dict[str, str]]:
+def build_messages(context: str, span: str, *, code_identifier: bool = False) -> list[dict[str, str]]:
     return [
-        {"role": "system", "content": SYSTEM_PROMPT},
+        {"role": "system", "content": SYSTEM_PROMPT + ("\nThis is a CODE identifier review. Check all examples. "
+         "A person-name part in any example means person; code syntax alone does not prove ordinary use. "
+         "If unsure, return uncertain." if code_identifier else "")},
         {"role": "user", "content": name_model_input(context, span)},
     ]
 
@@ -314,6 +316,7 @@ def build_messages(context: str, span: str) -> list[dict[str, str]]:
 def build_person_text_retry_messages(
     context: str,
     span: str,
+    *, code_identifier: bool = False,
 ) -> list[dict[str, str]]:
     """Repeat one request after a copied person span could not be anchored.
 
@@ -324,7 +327,7 @@ def build_person_text_retry_messages(
     """
 
     return [
-        *build_messages(context, span),
+        *build_messages(context, span, code_identifier=code_identifier),
         {"role": "user", "content": PERSON_TEXT_RETRY_INSTRUCTION},
     ]
 
@@ -476,10 +479,11 @@ class NameJudge:
         finding: Finding,
         snippet: str,
         occurrence_id: str,
+        *, code_identifier: bool = False,
     ) -> tuple[Decision, bool]:
         """Return one validated semantic proposal and whether it was cached."""
 
-        messages = build_messages(snippet, finding.text)
+        messages = build_messages(snippet, finding.text, code_identifier=code_identifier)
         key = response_cache_key(
             stage="judge", messages=messages, schema=JUDGE_RESPONSE_SCHEMA,
             options={"temperature": 0}, model_digest=self.model_digest,
@@ -556,7 +560,8 @@ class NameJudge:
             retry = call_ollama_json(
                 self.host,
                 self.model,
-                build_person_text_retry_messages(snippet, finding.text) if copying_error else messages,
+                build_person_text_retry_messages(snippet, finding.text, code_identifier=code_identifier)
+                if copying_error else messages,
                 JUDGE_RESPONSE_SCHEMA,
                 timeout=self.timeout,
                 retry_failures=0,

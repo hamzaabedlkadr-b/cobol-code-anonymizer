@@ -19,7 +19,7 @@ from .judge import (
 from .overlaps import resolve_overlaps
 from .policy import NAME_POLICY_TABLE, apply_name_policy, has_minimum_watchlist_context, instruction_text_requires_anonymization
 from .review_decisions import ReviewDecisions, source_line
-from .text_matching import prepare_watchlist, span_is_code, name_word_spans, marked_source_line, source_findings, source_occurrence_id, neighboring_model_context
+from .text_matching import prepare_watchlist, span_is_code, name_word_spans, marked_source_line, source_findings, source_occurrence_id, neighboring_model_context, code_identifier_span
 from .llm import NAME_VERIFIER_ENABLED
 from .source_reader import (
     SourceDecodingError,
@@ -54,6 +54,8 @@ def scan_path(
     file_times: dict[str, float] | None = None,
     collect_only: bool = False,
     saved_candidates: dict[str, list[scanner.Finding]] | None = None,
+    code_identifiers: dict | None = None,
+    identifier_checks: dict | None = None,
 ) -> list[scanner.Finding]:
     """Run the current file pipeline while preserving the legacy output shape."""
 
@@ -162,6 +164,8 @@ def scan_path(
                                  if finding.entity_type == "NAME" else finding for finding in file_findings]
             else:
                 file_findings = saved_candidates[relative_file]
+            if collect_only and code_identifiers is not None:
+                collect_code_identifiers(layout, file_findings, watchlist_words, code_identifiers)
             if not collect_only:
                 identifier_findings = [
                     finding
@@ -171,8 +175,11 @@ def scan_path(
                 ]
                 for finding in identifier_findings:
                     answer = review_answers.answer_for(finding.logical_candidate or finding.text, finding.review_line or source_line(finding.context, finding.text), finding.review_key) if review_answers else None
+                    span = code_identifier_span(layout, finding.start, finding.end)
+                    check = (identifier_checks or {}).get(source.text[slice(*span)].upper()) if span else None
                     row = policy_row(finding, source.sha256, code=True, answer=answer,
-                                           approved=scanner.fold_watchlist_value(finding.text) in approved_words)
+                                     approved=scanner.fold_watchlist_value(finding.text) in approved_words,
+                                     identifier_check=check, verifier_enabled=verifier_enabled)
                     identifier_reviews.append(row)
                     if row["policy_outcome"] == "leave_unchanged" and relative_file not in resolved_reviews:
                         resolved_reviews.append(relative_file)
@@ -245,17 +252,86 @@ def scan_path(
     return findings if collect_only else list(resolve_overlaps(findings).selected)
 
 
+def collect_code_identifiers(layout, findings, watchlist_words, examples):
+    """Keep up to three CODE examples from different files per exact token."""
+    for finding in findings:
+        if finding.entity_type != "NAME" or scanner.fold_watchlist_value(finding.text) not in watchlist_words:
+            continue
+        span = code_identifier_span(layout, finding.start, finding.end)
+        if span is None:
+            continue
+        identifier = layout.source.text[slice(*span)]
+        entries = examples.setdefault(identifier.upper(), [])
+        if len(entries) >= 3 or any(row["file"] == finding.file for row in entries):
+            continue
+        context = marked_source_line(layout.source.text, *span)
+        if layout.format == FIXED_COBOL:
+            context = context[6:]
+        entries.append({"file": finding.file, "line": finding.line, "context": context})
+
+
+def review_code_identifiers(examples, judge, verifier, report_path, answers, verifier_enabled=True):
+    """Check each exact identifier once; existing role caches save every answer."""
+    import csv
+    import hashlib
+
+    checks, rows = {}, []
+    judge.progress_update(f"CODE identifiers: {len(examples)} distinct; at most {2 * len(examples)} model requests before cache/retries")
+    for identifier, entries in sorted(examples.items()):
+        context = "\n".join([entries[0]["context"], *[row["context"].replace("[[", "").replace("]]", "") for row in entries[1:]]])
+        occurrence_id = hashlib.sha256((identifier + context).encode()).hexdigest()
+        answer = {"show": "not_person", "hide": "person"}.get(answers.get(identifier))
+        gate = apply_name_policy(occurrence_id=occurrence_id, model_context=context, judge_decision=None,
+                                 code_sensitive_identifier=False, review_answer=answer)
+        judged = verified = None
+        if verifier_enabled and gate.reading == NAME_POLICY_TABLE["no_judge"][1]:
+            first = entries[0]
+            candidate = scanner.Finding(first["file"], "NAME", identifier, 0, len(identifier), first["line"], 1, 1, context)
+            # Preserve the exact spelling highlighted in the first example.
+            candidate = replace(candidate, text=context.split("[[", 1)[1].split("]]", 1)[0])
+            judged, _ = judge.decide(candidate, context, occurrence_id, code_identifier=True)
+            if judged.outcome == "propose_unchanged" and verifier is not None:
+                verified = verifier.verify(occurrence_id=occurrence_id, candidate=candidate.text,
+                                            context=context, code_identifier=True)
+        failed = (occurrence_id in getattr(judge, "transport_failures", ()) or
+                  occurrence_id in getattr(verifier, "transport_failures", ()))
+        checks[identifier] = dict(judge=judged, verifier=verified, failed=failed, answer=answer)
+        decision = apply_name_policy(occurrence_id=occurrence_id, model_context=context,
+                                     judge_decision=judged, verifier_decision=verified,
+                                     code_sensitive_identifier=True, identifier_checked=True,
+                                     verifier_enabled=verifier_enabled, review_answer=answer,
+                                     model_transport_failure=failed)
+        rows.append({"identifier": identifier,
+                     "examples": "\n".join(f"{row['file']}:{row['line']} {row['context']}" for row in entries),
+                     "judge_status": judged.outcome if judged else "not_called",
+                     "verifier_status": verified.outcome if verified else "not_called",
+                     "decision": decision.outcome, "reason": decision.reading, "answer": answers.get(identifier, "")})
+    report_path.parent.mkdir(parents=True, exist_ok=True)
+    with report_path.open("w", newline="", encoding="utf-8") as handle:
+        writer = csv.DictWriter(handle, fieldnames=("identifier", "examples", "judge_status", "verifier_status", "decision", "reason", "answer"))
+        writer.writeheader()
+        writer.writerows(rows)
+    return checks
+
+
 def policy_row(
     finding: scanner.Finding,
     file_sha256: str,
     *, code: bool = False, answer: str | None = None, approved: bool = False,
+    identifier_check=None, verifier_enabled: bool = NAME_VERIFIER_ENABLED,
 ) -> dict[str, object]:
     """Record a human answer or a required code review through policy."""
 
     occurrence_id = source_occurrence_id(finding, file_sha256)
+    check = identifier_check or {}
+    judged, verified = check.get("judge"), check.get("verifier")
+    answer = answer or check.get("answer")
     decision = apply_name_policy(
         occurrence_id=occurrence_id, model_context=finding.context,
-        judge_decision=None, code_sensitive_identifier=code,
+        judge_decision=replace(judged, occurrence_id=occurrence_id) if judged else None,
+        verifier_decision=replace(verified, occurrence_id=occurrence_id) if verified else None,
+        identifier_checked=identifier_check is not None, verifier_enabled=verifier_enabled,
+        model_transport_failure=check.get("failed", False), code_sensitive_identifier=code,
         review_answer=answer, watchlist_pair=finding.source == "watchlist_pair",
         watchlist_single=finding.source == "watchlist", approved_word=approved)
     return {
@@ -269,6 +345,8 @@ def policy_row(
             "review_line": finding.review_line, "review_key": finding.review_key,
         "source": finding.source, "approved": approved, "watchlist": finding.source in {"watchlist", "path_watchlist"},
         "code_sensitive_identifier": code,
+        "judge_outcome": judged.outcome if judged else "not_called",
+        "verifier_outcome": verified.outcome if verified else "not_called",
         "policy_outcome": decision.outcome,
         "policy_reading": decision.reading,
         "policy_decision": decision.to_dict(),
