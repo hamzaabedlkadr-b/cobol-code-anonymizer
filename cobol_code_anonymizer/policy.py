@@ -112,6 +112,7 @@ def apply_name_policy(
     model_transport_failure: bool = False,
     instruction_context: str = "",
     identifier_checked: bool = False,
+    judge_enabled: bool = False,
 ) -> Decision:
     """Choose hide, show, or required review from the single table."""
 
@@ -146,7 +147,7 @@ def apply_name_policy(
         return _table_decision(key="code_show" if approved_word else "code_hide", occurrence_id=occurrence_id)
     if watchlist_full_name:
         return _table_decision(key="watchlist_full_name", occurrence_id=occurrence_id)
-    if watchlist_pair:
+    if watchlist_pair and (not judge_enabled or not verifier_enabled):
         return _table_decision(key="watchlist_pair", occurrence_id=occurrence_id)
     if instruction_text_requires_anonymization(instruction_context or model_context):
         return _table_decision(key="instruction_text", occurrence_id=occurrence_id)

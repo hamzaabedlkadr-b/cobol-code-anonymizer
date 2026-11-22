@@ -424,6 +424,7 @@ def review_name_findings(
         approved = word in approved_words
         model_context = neighboring_model_context(finding, layout, context)
         gates = dict(model_context=context, code_sensitive_identifier=code, watchlist_pair=pair,
+                     judge_enabled=name_judge is not None,
                      watchlist_full_name=watchlist and len(candidate.text.split()) > 1,
                      watchlist_single=watchlist, approved_word=approved, verifier_enabled=verifier_enabled,
                      instruction_context=model_context)
@@ -460,7 +461,7 @@ def review_name_findings(
             decision = apply_name_policy(occurrence_id=target_id, **gates,
                                          judge_decision=replace(judged, occurrence_id=target_id) if judged else None,
                                          verifier_decision=replace(verified, occurrence_id=target_id) if verified else None)
-            gate = "watchlist_pair" if pair else "instruction_text" if instruction_text_requires_anonymization(context) else ""
+            gate = "watchlist_pair" if pair and name_judge is None else "instruction_text" if instruction_text_requires_anonymization(model_context) else ""
             _record_decision(name_judge, target, judged, decision, cached, policy_gate=gate,
                              verifier_decision=verified, watchlist=watchlist, approved=approved, decisions=audit)
             if decision.outcome != "leave_unchanged":

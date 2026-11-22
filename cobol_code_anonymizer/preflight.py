@@ -269,10 +269,11 @@ def run_preflight(
             if not judge_enabled:
                 continue
             gate = apply_name_policy(occurrence_id="0" * 64, model_context=context, judge_decision=None,
+                                     judge_enabled=judge_enabled,
                                      code_sensitive_identifier=False, watchlist_pair=is_pair,
                                      watchlist_full_name=(finding.source == "watchlist" or word in watchlist_words)
                                      and len((finding.logical_candidate or finding.text).split()) > 1,
-                                     watchlist_single=is_watchlist or word in watchlist_words,
+                                     watchlist_single=not is_pair and (is_watchlist or word in watchlist_words),
                                      approved_word=word in approved_words, verifier_enabled=verifier_enabled)
             if gate.reading != NAME_POLICY_TABLE["no_judge"][1]:
                 continue
