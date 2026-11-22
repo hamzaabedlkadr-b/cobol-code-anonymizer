@@ -3,9 +3,17 @@
 from dataclasses import asdict
 import hashlib
 import json
+from pathlib import Path
 
 from .logical_text import LogicalPiece, LogicalText
 from .scanner import Finding, iter_all_files, relative_name
+
+
+def code_stamp(stage):
+    """Invalidate only the stage whose source code changed."""
+    modules = ("scanner", "cobol_layout", "logical_text", "source_reader", "text_matching", "extractor", "overlaps", "pipeline") if stage == "extract" else (
+        "pipeline", "policy", "judge", "verifier", "decisions", "review_decisions", "llm", "cli", "checkpoints")
+    return hashlib.sha256(b"".join(Path(__file__).with_name(name + ".py").read_bytes() for name in modules)).hexdigest()
 
 
 def finding_from_dict(data):
@@ -27,7 +35,8 @@ def source_signature(input_path, skip_roots, supplied, settings):
 def save_checkpoint(path, signature, findings, **state):
     if any(signature["files"].get(file) != digest for file, digest in state["source_hashes"].items()):
         raise ValueError("source changed during the stage; run extract again")
-    payload = {"version": 1, "signature": signature,
+    payload = {"version": 2, "signature": signature, "extraction_code": code_stamp("extract"),
+               "decision_code": code_stamp("decide") if path.stem == "decisions" else None,
                "findings": [asdict(finding) for finding in findings], **state}
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary = path.with_suffix(".tmp")
@@ -37,8 +46,12 @@ def save_checkpoint(path, signature, findings, **state):
 
 def load_checkpoint(path, signature):
     payload = json.loads(path.read_text(encoding="utf-8"))
-    if payload.get("version") != 1 or payload.get("signature") != signature:
+    if payload.get("version") != 2 or payload.get("signature") != signature:
         raise ValueError("saved stage does not match the input or detector settings; run extract again")
+    if payload.get("extraction_code") != code_stamp("extract"):
+        raise ValueError("extraction code changed; run extract again")
+    if path.stem == "decisions" and payload.get("decision_code") != code_stamp("decide"):
+        raise ValueError("decision code changed; run decide again")
     payload["findings"] = [finding_from_dict(item) for item in payload["findings"]]
     return payload
 
