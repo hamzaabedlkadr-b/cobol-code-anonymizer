@@ -546,20 +546,20 @@ class NameJudge:
                 context=snippet,
                 model_digest=self.model_digest,
             )
-        except PersonTextNotFoundError:
-            # A valid JSON answer may still have copied a misspelled person
-            # span. Ask once for a literal source copy; never broaden this to
-            # other validation errors or repeated model calls.
-            self.person_text_retries += 1
+        except (KeyError, TypeError, ValueError) as exc:
+            if result.retried:
+                self.errors += 1
+                return error_decision(occurrence_id=occurrence_id, model_digest=self.model_digest,
+                                      error_message=f"invalid judge answer: {exc}"), False
+            copying_error = isinstance(exc, PersonTextNotFoundError)
+            self.person_text_retries += int(copying_error)
             retry = call_ollama_json(
                 self.host,
                 self.model,
-                build_person_text_retry_messages(
-                    snippet,
-                    finding.text,
-                ),
+                build_person_text_retry_messages(snippet, finding.text) if copying_error else messages,
                 JUDGE_RESPONSE_SCHEMA,
                 timeout=self.timeout,
+                retry_failures=0,
                 transport_state=self.transport_state,
             )
             self.latency_s += retry.latency_s
@@ -603,20 +603,10 @@ class NameJudge:
                     error_decision(
                         occurrence_id=occurrence_id,
                         model_digest=self.model_digest,
-                        error_message=f"invalid judge answer after person-text retry: {exc}",
+                        error_message=f"invalid judge answer after {'person-text' if copying_error else 'answer'} retry: {exc}",
                     ),
                     False,
                 )
-        except (KeyError, TypeError, ValueError) as exc:
-            self.errors += 1
-            return (
-                error_decision(
-                    occurrence_id=occurrence_id,
-                    model_digest=self.model_digest,
-                    error_message=f"invalid judge answer: {exc}",
-                ),
-                False,
-            )
         # Only a fully validated reply is reusable.  ``payload`` is the retry
         # answer when a copied person span required the one allowed retry.
         self._response_cache.put(key, dict(payload))

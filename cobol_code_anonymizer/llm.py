@@ -13,9 +13,9 @@ from typing import Any
 # Project-wide Ollama defaults. CLI options override each role independently.
 OLLAMA_HOST = "http://127.0.0.1:11434"
 NAME_EXTRACT_MODEL = "qwen3.5:9b"
-NAME_JUDGE_MODEL = "ministral-3:3b"
+NAME_JUDGE_MODEL = "qwen3.6:35b"
 NAME_VERIFIER_ENABLED = True
-NAME_VERIFIER_MODEL = "qwen3.5:9b"
+NAME_VERIFIER_MODEL = "ministral-3:8b"
 OLLAMA_TIMEOUT = 300.0
 
 # Backward-compatible alias for integrations that imported the old shared

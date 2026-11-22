@@ -344,16 +344,17 @@ def review_name_findings(
         pair = finding.source == "watchlist_pair"
         watchlist = finding.source == "watchlist" or word in watchlist_words
         approved = word in approved_words
+        model_context = neighboring_model_context(finding, layout, context)
         gates = dict(model_context=context, code_sensitive_identifier=code, watchlist_pair=pair,
                      watchlist_full_name=watchlist and len(candidate.text.split()) > 1,
-                     watchlist_single=watchlist, approved_word=approved, verifier_enabled=verifier_enabled)
+                     watchlist_single=watchlist, approved_word=approved, verifier_enabled=verifier_enabled,
+                     instruction_context=model_context)
         judged, verified, cached = None, None, False
         gate = apply_name_policy(occurrence_id=occurrence_id, judge_decision=None, **gates)
         needs_model = gate.reading == NAME_POLICY_TABLE["no_judge"][1]
         count += 1
         if needs_model and name_judge is not None:
             name_judge.progress_update(f"candidate {count}/{total}: judging {finding.file}:{finding.line}")
-            model_context = neighboring_model_context(finding, layout, context)
             try:
                 judged, cached = name_judge.decide(candidate, model_context, occurrence_id)
             except Exception as exc:
