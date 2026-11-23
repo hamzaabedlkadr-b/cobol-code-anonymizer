@@ -238,7 +238,8 @@ def write_mapping_template(
         writer = csv.DictWriter(handle, fieldnames=fieldnames)
         writer.writeheader()
         for index, group in sorted(enumerate(groups, start=1),
-                                   key=lambda item: min((hit.file, hit.line, hit.column) for hit in item[1].findings)):
+                                   key=lambda item: (entity_sort_order(item[1].entity_type),
+                                                     min((hit.file, hit.line, hit.column) for hit in item[1].findings))):
             replacement = suggested_replacement(group, index, salt) if replacements is None else replacements.get(group.key, "")
             if group.entity_type == "NAME" and replacement:
                 name_lines.append(f"{group.original} -> {replacement}\n")

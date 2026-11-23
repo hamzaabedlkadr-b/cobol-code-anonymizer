@@ -1047,6 +1047,7 @@ def write_llm_name_review_text(
                 "reasons": [],
                 "locations": [],
                 "count": 0,
+                "context": str(row.get("context", "")).strip(),
             },
         )
         if reason not in group["reasons"]:
@@ -1059,7 +1060,10 @@ def write_llm_name_review_text(
             group["locations"].append(location)
 
     status_order = {"REVIEW REQUIRED": 0, "ACCEPTED AS NAME - hidden": 1, "REJECTED - left as is": 2}
-    ordered = sorted(grouped.values(), key=lambda group: status_order.get(str(group["status"]), 99))
+    ordered = sorted(grouped.values(), key=lambda group: (
+        status_order.get(str(group["status"]), 99),
+        group["status"] == "ACCEPTED AS NAME - hidden" and len(str(group["name"]).split()) > 2,
+    ))
     current_status = ""
     section_index = 0
     for group in ordered:
@@ -1075,6 +1079,8 @@ def write_llm_name_review_text(
             f"  {section_index:>3}. {group['name']}  hits={group['count']}  "
             f"locations={locations}  reason={reasons}"
         )
+        if group["context"]:
+            lines.append("       " + str(group["context"]).replace("\n", "\n       "))
 
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
