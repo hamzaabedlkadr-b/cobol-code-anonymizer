@@ -97,12 +97,10 @@ def export_candidates(
     output_path: Path,
     *,
     watchlists: Iterable[Path] = (),
-    include_default_names: bool = True,
+    include_default_names: bool = False,
     use_presidio: bool = True,
     presidio_model: str = "it_core_news_sm",
     name_scope: str = "context",
-    detect_unknown_names: bool = False,
-    unknown_name_min_length: int = 4,
 ) -> tuple[int, list[str]]:
     """Run the current NAME candidate scanners and write deterministic JSONL."""
     input_path = input_path.resolve()
@@ -114,8 +112,6 @@ def export_candidates(
         entities={"NAME"},
         extra_watchlists=watchlist_paths,
         include_default_names=include_default_names,
-        detect_unknown_names=detect_unknown_names,
-        unknown_name_min_length=unknown_name_min_length,
         name_scope=name_scope,
         use_presidio=use_presidio,
         presidio_model=presidio_model,
@@ -167,17 +163,6 @@ def build_parser() -> argparse.ArgumentParser:
         default="context",
         help="Use the scanner's existing context or all-text name scope.",
     )
-    parser.add_argument(
-        "--detect-unknown-names",
-        action="store_true",
-        help="Enable the existing unknown-name candidate detector.",
-    )
-    parser.add_argument(
-        "--unknown-name-min-length",
-        type=int,
-        default=4,
-        help="Minimum letters for unknown-name candidates.",
-    )
     return parser
 
 
@@ -190,8 +175,6 @@ def main(argv: list[str] | None = None) -> int:
         parser.error(f"Input path does not exist: {input_path}")
     if input_path.is_dir() and is_within(output_path, input_path):
         parser.error("--output must be outside the input folder")
-    if args.unknown_name_min_length < 1:
-        parser.error("--unknown-name-min-length must be at least 1")
 
     count, diagnostics = export_candidates(
         input_path,
@@ -201,8 +184,6 @@ def main(argv: list[str] | None = None) -> int:
         use_presidio=not args.no_presidio,
         presidio_model=args.presidio_model,
         name_scope=args.name_scope,
-        detect_unknown_names=args.detect_unknown_names,
-        unknown_name_min_length=args.unknown_name_min_length,
     )
     for message in diagnostics:
         print(f"Warning: {message}", file=sys.stderr)

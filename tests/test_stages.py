@@ -15,6 +15,76 @@ from cobol_code_anonymizer.scanner import Finding
 
 
 class StageTests(unittest.TestCase):
+    def test_summary_and_preflight_explain_selected_extensions_and_skip_reasons(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            (root / 'A.CBL').write_text('      * NOTHING PERSONAL\n')
+            (root / 'B.CPY').write_text('      * NOTHING PERSONAL\n')
+            (root / 'A.lst').write_text('listing')
+            (root / 'A.bin').write_bytes(b'\x00')
+            words = root / 'words.txt'
+            words.write_text('TOKENALPHA\n')
+            output, reports = root / 'out', root / 'reports'
+            output.mkdir()
+            (output / 'old.txt').write_text('old output')
+            args = [str(root), '--watchlist', str(words), '--no-presidio', '--out-dir', str(output),
+                    '--report-dir', str(reports)]
+            with redirect_stdout(io.StringIO()), patch('urllib.request.urlopen', side_effect=AssertionError('no network')):
+                self.assertEqual(cli.main(args + ['--step', 'extract']), 0)
+                self.assertEqual(cli.main(args + ['--preflight']), 0)
+            for path in (reports / 'scan_summary.txt', reports / 'preflight.txt'):
+                text = path.read_text()
+                self.assertIn('Input files: 5; selected: 2; skipped: 3', text)
+                self.assertIn('.bin=1, .cbl=1, .cpy=1, .lst=1, .txt=1', text)
+                self.assertIn('Skipped: supplied watchlist=1', text)
+                self.assertIn('Skipped: unsupported extension=2', text)
+
+    def test_stage_code_changes_require_only_the_affected_stage_again(self):
+        from cobol_code_anonymizer.checkpoints import code_stamp
+
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            source = root / 'SYNTH.CBL'
+            source.write_text('      * NOTHING PERSONAL\n')
+            reports = root / 'reports'
+            args = [str(source), '--no-presidio', '--auto', '--out-dir', str(root / 'out'),
+                    '--report-dir', str(reports)]
+            with redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()), \
+                 patch('urllib.request.urlopen', side_effect=AssertionError('no network')):
+                self.assertEqual(cli.main(args), 0)
+                with patch('cobol_code_anonymizer.checkpoints.code_stamp',
+                           side_effect=lambda stage: 'changed' if stage == 'decide' else code_stamp(stage)):
+                    with self.assertRaises(SystemExit):
+                        cli.main(args + ['--step', 'write', '--overwrite'])
+                    self.assertEqual(cli.main(args + ['--step', 'decide']), 0)
+                    self.assertEqual(cli.main(args + ['--step', 'write', '--overwrite']), 0)
+                with patch('cobol_code_anonymizer.checkpoints.code_stamp', return_value='layout changed'):
+                    with self.assertRaises(SystemExit):
+                        cli.main(args + ['--step', 'decide'])
+
+    def test_one_run_saves_raw_candidates_and_can_redecide_and_write(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            source = root / 'SYNTH.CBL'
+            source.write_text('      * TOKENALPHA TOKENBETA\n      * MATRICOLA: 123456\n')
+            words = root / 'words.txt'
+            words.write_text('TOKENALPHA\nTOKENBETA\n')
+            reports = root / 'reports'
+            args = [str(source), '--watchlist', str(words), '--no-presidio', '--auto',
+                    '--out-dir', str(root / 'out'), '--report-dir', str(reports)]
+            with redirect_stdout(io.StringIO()), patch('urllib.request.urlopen', side_effect=AssertionError('no network')):
+                self.assertEqual(cli.main(args), 0)
+                original = (root / 'out' / source.name).read_bytes()
+                candidates = json.loads((reports / 'candidates.json').read_text())
+                decisions = json.loads((reports / 'decisions.json').read_text())
+                self.assertTrue(candidates['findings'])
+                self.assertTrue(decisions['findings'])
+                with patch('cobol_code_anonymizer.scanner.scan_text', side_effect=AssertionError('no extraction')):
+                    self.assertEqual(cli.main(args + ['--step', 'decide']), 0)
+                with patch('cobol_code_anonymizer.cli.scan_path', side_effect=AssertionError('no scan')):
+                    self.assertEqual(cli.main(args + ['--step', 'write', '--overwrite']), 0)
+                self.assertEqual((root / 'out' / source.name).read_bytes(), original)
+
     def test_logical_candidate_round_trip(self):
         logical = LogicalText('TOKENALPHA TOKENBETA',
                               (LogicalPiece(0, 11, 10, 21), LogicalPiece(11, 20, 40, 49)), 'literal')
@@ -74,7 +144,7 @@ class StageTests(unittest.TestCase):
             args = [str(source), '--watchlist', str(watchlist), '--no-presidio',
                     '--name-judge-model', 'fake', '--name-verifier-model', 'fake',
                     '--out-dir', str(root / 'out'), '--report-dir', str(root / 'reports')]
-            def judged(candidate, context, occurrence_id):
+            def judged(candidate, context, occurrence_id, **kwargs):
                 return Decision(occurrence_id=occurrence_id, stage='judge', outcome='propose_unchanged',
                                 person_scope='none', non_person_category='common_word',
                                 reading='ordinary word here', model_digest='1' * 64,
@@ -140,10 +210,10 @@ class StageTests(unittest.TestCase):
             (batch / 'EMPTY.CPY').write_bytes(b'      * PLAIN TEXT\r\n')
             (batch / 'BAD.CBL').write_bytes(b'\x00binary')
             watchlist = root / 'words.txt'
-            watchlist.write_text('TOKENALPHA\nTOKENBETA\nTOKENCHARLIE\nTOKENDELTA\nTOKENOMEGA\nTOKENGAMMA\n123456\n')
+            watchlist.write_text('TOKENALPHA\nTOKENBETA\nTOKENCHARLIE\nTOKENDELTA\nTOKENOMEGA\nTOKENGAMMA\n123456\nTOKENALPHA TOKENBETA\nTOKENDELTA TOKENOMEGA\n')
             base = [str(batch), '--watchlist', str(watchlist), '--no-presidio', '--auto',
                     '--name-judge-model', 'fake', '--name-verifier-model', 'fake']
-            def judged(candidate, context, occurrence_id):
+            def judged(candidate, context, occurrence_id, **kwargs):
                 return Decision(occurrence_id=occurrence_id, stage='judge', outcome='propose_unchanged',
                                 person_scope='none', non_person_category='common_word', reading='ordinary word here',
                                 model_digest='1' * 64, prompt_version='fake'), False
@@ -172,7 +242,7 @@ class StageTests(unittest.TestCase):
             self.assertIn('è'.encode('cp1252'), written)
             self.assertIn(b'VALORE TOKENCHARLIE PREVISTO', written)
             self.assertNotIn(b'TOKENDELTA', written)
-            self.assertNotIn(b'TOKENGAMMA1', written)
+            self.assertIn(b'TOKENGAMMA1', written)
             for name in ('replacement_map.csv', 'replacement_map.txt', 'llm_finding.txt', 'llm_name_review.csv', 'scan_summary.txt'):
                 self.assertEqual((root / 'full_reports' / name).read_bytes(), (root / 'split_reports' / name).read_bytes(), name)
 

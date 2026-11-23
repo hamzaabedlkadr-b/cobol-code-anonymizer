@@ -42,6 +42,20 @@ class LayoutTests(unittest.TestCase):
                 (region.original_start, region.original_end),
             )
 
+    def test_identification_payloads_and_continuations_are_text_once(self):
+        from cobol_code_anonymizer.logical_text import extraction_texts
+        for prefix in ("", "000100 "):
+            for header in ("AUTHOR", "INSTALLATION", "DATE-WRITTEN", "DATE-COMPILED", "SECURITY", "REMARKS"):
+                with self.subTest(prefix=prefix, header=header):
+                    text = "\n".join(prefix + line for line in (
+                        "IDENTIFICATION DIVISION.", header + ". Mario Rossi.",
+                        "    Anna Verdi.", "PROGRAM-ID. TEST.",
+                        "DATA DIVISION.", "AUTHOR. CODE-NAME.")) + "\n"
+                    layout = layout_for(text, "test.cbl")
+                    self.assertEqual(self.region_texts(layout, TEXT), [" Mario Rossi.", "    Anna Verdi."])
+                    self.assertEqual([r.text for r in extraction_texts(layout)], [" Mario Rossi.", "    Anna Verdi."])
+                    self.assert_complete_exact_partition(layout)
+
     def test_only_the_five_hint_region_kinds_are_produced(self):
         layouts = [
             layout_for("000100*comment\n000200 DISPLAY 'value'.\n", "A.CBL"),

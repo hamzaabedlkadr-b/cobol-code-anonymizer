@@ -1,0 +1,6084 @@
+[
+  {
+    "id": "C00001",
+    "line": 7,
+    "category": "bulk-positive",
+    "line_type": "value-literal",
+    "text": "Edoardo Lanza",
+    "expected_entity": "NAME",
+    "expected_route": "G2",
+    "expected_outcome": "anonymize",
+    "why": "random Italian full name in a VALUE literal",
+    "truth_entity": "NAME",
+    "truth_names": [
+      {
+        "text": "Edoardo Lanza",
+        "line": 7,
+        "column": 36,
+        "start": 35,
+        "end": 48,
+        "in_watchlist": true
+      }
+    ],
+    "direct_person_cue": false
+  },
+  {
+    "id": "C00002",
+    "line": 8,
+    "category": "bulk-positive",
+    "line_type": "value-literal",
+    "text": "Rossana Ravelli",
+    "expected_entity": "NAME",
+    "expected_route": "G3",
+    "expected_outcome": "anonymize",
+    "why": "random Italian full name in a VALUE literal",
+    "truth_entity": "NAME",
+    "truth_names": [
+      {
+        "text": "Rossana Ravelli",
+        "line": 8,
+        "column": 36,
+        "start": 35,
+        "end": 50,
+        "in_watchlist": false
+      }
+    ],
+    "direct_person_cue": false
+  },
+  {
+    "id": "C00003",
+    "line": 9,
+    "category": "bulk-positive",
+    "line_type": "value-literal",
+    "text": "Lidiana Paolini",
+    "expected_entity": "NAME",
+    "expected_route": "G2",
+    "expected_outcome": "anonymize",
+    "why": "random Italian full name in a VALUE literal",
+    "truth_entity": "NAME",
+    "truth_names": [
+      {
+        "text": "Lidiana Paolini",
+        "line": 9,
+        "column": 36,
+        "start": 35,
+        "end": 50,
+        "in_watchlist": true
+      }
+    ],
+    "direct_person_cue": false
+  },
+  {
+    "id": "C00004",
+    "line": 10,
+    "category": "bulk-positive",
+    "line_type": "value-literal",
+    "text": "Luciano Farini",
+    "expected_entity": "NAME",
+    "expected_route": "G3",
+    "expected_outcome": "anonymize",
+    "why": "random Italian full name in a VALUE literal",
+    "truth_entity": "NAME",
+    "truth_names": [
+      {
+        "text": "Luciano Farini",
+        "line": 10,
+        "column": 36,
+        "start": 35,
+        "end": 49,
+        "in_watchlist": false
+      }
+    ],
+    "direct_person_cue": false
+  },
+  {
+    "id": "C00005",
+    "line": 11,
+    "category": "ordinary-value",
+    "line_type": "value-literal",
+    "text": "MESE DI APRILE",
+    "expected_entity": "NONE",
+    "expected_route": "none",
+    "expected_outcome": "leave",
+    "why": "ordinary VALUE literal",
+    "truth_entity": "NONE",
+    "truth_names": [],
+    "direct_person_cue": false
+  },
+  {
+    "id": "C00006",
+    "line": 12,
+    "category": "ordinary-value",
+    "line_type": "value-literal",
+    "text": "SALA SERVER",
+    "expected_entity": "NONE",
+    "expected_route": "none",
+    "expected_outcome": "leave",
+    "why": "ordinary VALUE literal",
+    "truth_entity": "NONE",
+    "truth_names": [],
+    "direct_person_cue": false
+  },
+  {
+    "id": "C00007",
+    "line": 13,
+    "category": "ordinary-value",
+    "line_type": "value-literal",
+    "text": "C/C",
+    "expected_entity": "NONE",
+    "expected_route": "none",
+    "expected_outcome": "leave",
+    "why": "ordinary VALUE literal",
+    "truth_entity": "NONE",
+    "truth_names": [],
+    "direct_person_cue": false
+  },
+  {
+    "id": "C00008",
+    "line": 14,
+    "category": "ordinary-value",
+    "line_type": "value-literal",
+    "text": "BANCA DI MILANO",
+    "expected_entity": "NONE",
+    "expected_route": "none",
+    "expected_outcome": "leave",
+    "why": "ordinary VALUE literal",
+    "truth_entity": "NONE",
+    "truth_names": [],
+    "direct_person_cue": false
+  },
+  {
+    "id": "C00009",
+    "line": 15,
+    "category": "identifier-data",
+    "line_type": "plain-code",
+    "text": "WS-FERRO-TOT",
+    "expected_entity": "NAME",
+    "expected_route": "G4",
+    "expected_outcome": "review_required",
+    "why": "possible name is inside a code-sensitive program identifier",
+    "truth_entity": "NAME",
+    "truth_names": [
+      {
+        "text": "FERRO",
+        "line": 15,
+        "column": 15,
+        "start": 14,
+        "end": 19,
+        "in_watchlist": true,
+        "truth_name": "WS-FERRO-TOT"
+      }
+    ],
+    "direct_person_cue": false
+  },
+  {
+    "id": "C00010",
+    "line": 16,
+    "category": "identifier-data",
+    "line_type": "plain-code",
+    "text": "WS-NERI-TOT",
+    "expected_entity": "NAME",
+    "expected_route": "G4",
+    "expected_outcome": "review_required",
+    "why": "possible name is inside a code-sensitive program identifier",
+    "truth_entity": "NAME",
+    "truth_names": [
+      {
+        "text": "NERI",
+        "line": 16,
+        "column": 15,
+        "start": 14,
+        "end": 18,
+        "in_watchlist": true,
+        "truth_name": "WS-NERI-TOT"
+      }
+    ],
+    "direct_person_cue": false
+  },
+  {
+    "id": "C00011",
+    "line": 17,
+    "category": "identifier-data",
+    "line_type": "plain-code",
+    "text": "WS-SALA-TOT",
+    "expected_entity": "NAME",
+    "expected_route": "G4",
+    "expected_outcome": "review_required",
+    "why": "possible name is inside a code-sensitive program identifier",
+    "truth_entity": "NAME",
+    "truth_names": [
+      {
+        "text": "SALA",
+        "line": 17,
+        "column": 15,
+        "start": 14,
+        "end": 18,
+        "in_watchlist": true,
+        "truth_name": "WS-SALA-TOT"
+      }
+    ],
+    "direct_person_cue": false
+  },
+  {
+    "id": "C00012",
+    "line": 18,
+    "category": "identifier-data",
+    "line_type": "plain-code",
+    "text": "WS-ROSA-TOT",
+    "expected_entity": "NAME",
+    "expected_route": "G4",
+    "expected_outcome": "review_required",
+    "why": "possible name is inside a code-sensitive program identifier",
+    "truth_entity": "NAME",
+    "truth_names": [
+      {
+        "text": "ROSA",
+        "line": 18,
+        "column": 15,
+        "start": 14,
+        "end": 18,
+        "in_watchlist": true,
+        "truth_name": "WS-ROSA-TOT"
+      }
+    ],
+    "direct_person_cue": false
+  },
+  {
+    "id": "C00013",
+    "line": 19,
+    "category": "identifier-data",
+    "line_type": "plain-code",
+    "text": "WS-COSTA-TOT",
+    "expected_entity": "NAME",
+    "expected_route": "G4",
+    "expected_outcome": "review_required",
+    "why": "possible name is inside a code-sensitive program identifier",
+    "truth_entity": "NAME",
+    "truth_names": [
+      {
+        "text": "COSTA",
+        "line": 19,
+        "column": 15,
+        "start": 14,
+        "end": 19,
+        "in_watchlist": true,
+        "truth_name": "WS-COSTA-TOT"
+      }
+    ],
+    "direct_person_cue": false
+  },
+  {
+    "id": "C00014",
+    "line": 20,
+    "category": "identifier-data",
+    "line_type": "plain-code",
+    "text": "WS-RIVA-TOT",
+    "expected_entity": "NAME",
+    "expected_route": "G4",
+    "expected_outcome": "review_required",
+    "why": "possible name is inside a code-sensitive program identifier",
+    "truth_entity": "NAME",
+    "truth_names": [
+      {
+        "text": "RIVA",
+        "line": 20,
+        "column": 15,
+        "start": 14,
+        "end": 18,
+        "in_watchlist": true,
+        "truth_name": "WS-RIVA-TOT"
+      }
+    ],
+    "direct_person_cue": false
+  },
+  {
+    "id": "C00015",
+    "line": 21,
+    "category": "identifier-data",
+    "line_type": "plain-code",
+    "text": "WS-FIORE-TOT",
+    "expected_entity": "NAME",
+    "expected_route": "G4",
+    "expected_outcome": "review_required",
+    "why": "possible name is inside a code-sensitive program identifier",
+    "truth_entity": "NAME",
+    "truth_names": [
+      {
+        "text": "FIORE",
+        "line": 21,
+        "column": 15,
+        "start": 14,
+        "end": 19,
+        "in_watchlist": true,
+        "truth_name": "WS-FIORE-TOT"
+      }
+    ],
+    "direct_person_cue": false
+  },
+  {
+    "id": "C00016",
+    "line": 22,
+    "category": "identifier-data",
+    "line_type": "plain-code",
+    "text": "WS-LEONE-TOT",
+    "expected_entity": "NAME",
+    "expected_route": "G4",
+    "expected_outcome": "review_required",
+    "why": "possible name is inside a code-sensitive program identifier",
+    "truth_entity": "NAME",
+    "truth_names": [
+      {
+        "text": "LEONE",
+        "line": 22,
+        "column": 15,
+        "start": 14,
+        "end": 19,
+        "in_watchlist": true,
+        "truth_name": "WS-LEONE-TOT"
+      }
+    ],
+    "direct_person_cue": false
+  },
+  {
+    "id": "C00017",
+    "line": 23,
+    "category": "identifier-data",
+    "line_type": "plain-code",
+    "text": "WS-APRILE-TOT",
+    "expected_entity": "NAME",
+    "expected_route": "G4",
+    "expected_outcome": "review_required",
+    "why": "possible name is inside a code-sensitive program identifier",
+    "truth_entity": "NAME",
+    "truth_names": [
+      {
+        "text": "APRILE",
+        "line": 23,
+        "column": 15,
+        "start": 14,
+        "end": 20,
+        "in_watchlist": false,
+        "truth_name": "WS-APRILE-TOT"
+      }
+    ],
+    "direct_person_cue": false
+  },
+  {
+    "id": "C00018",
+    "line": 24,
+    "category": "identifier-data",
+    "line_type": "plain-code",
+    "text": "WS-MILANO-TOT",
+    "expected_entity": "NAME",
+    "expected_route": "G4",
+    "expected_outcome": "review_required",
+    "why": "possible name is inside a code-sensitive program identifier",
+    "truth_entity": "NAME",
+    "truth_names": [
+      {
+        "text": "MILANO",
+        "line": 24,
+        "column": 15,
+        "start": 14,
+        "end": 20,
+        "in_watchlist": false,
+        "truth_name": "WS-MILANO-TOT"
+      }
+    ],
+    "direct_person_cue": false
+  },
+  {
+    "id": "C00019",
+    "line": 26,
+    "category": "no-cue-repeated-surname",
+    "line_type": "full-line-comment",
+    "text": "Martini",
+    "expected_entity": "NAME",
+    "expected_route": "G3",
+    "expected_outcome": "anonymize",
+    "why": "same non-roster Italian surname with no direct person cue",
+    "truth_entity": "NAME",
+    "truth_names": [
+      {
+        "text": "Martini",
+        "line": 26,
+        "column": 14,
+        "start": 13,
+        "end": 20,
+        "in_watchlist": false
+      }
+    ],
+    "direct_person_cue": false
+  },
+  {
+    "id": "C00020",
+    "line": 27,
+    "category": "no-cue-repeated-surname",
+    "line_type": "full-line-comment",
+    "text": "Martini",
+    "expected_entity": "NAME",
+    "expected_route": "G3",
+    "expected_outcome": "anonymize",
+    "why": "same non-roster Italian surname with no direct person cue",
+    "truth_entity": "NAME",
+    "truth_names": [
+      {
+        "text": "Martini",
+        "line": 27,
+        "column": 18,
+        "start": 17,
+        "end": 24,
+        "in_watchlist": false
+      }
+    ],
+    "direct_person_cue": false
+  },
+  {
+    "id": "C00021",
+    "line": 28,
+    "category": "no-cue-repeated-surname",
+    "line_type": "full-line-comment",
+    "text": "Martini",
+    "expected_entity": "NAME",
+    "expected_route": "G3",
+    "expected_outcome": "anonymize",
+    "why": "same non-roster Italian surname with no direct person cue",
+    "truth_entity": "NAME",
+    "truth_names": [
+      {
+        "text": "Martini",
+        "line": 28,
+        "column": 17,
+        "start": 16,
+        "end": 23,
+        "in_watchlist": false
+      }
+    ],
+    "direct_person_cue": false
+  },
+  {
+    "id": "C00022",
+    "line": 29,
+    "category": "no-cue-repeated-surname",
+    "line_type": "full-line-comment",
+    "text": "Martini",
+    "expected_entity": "NAME",
+    "expected_route": "G3",
+    "expected_outcome": "anonymize",
+    "why": "same non-roster Italian surname with no direct person cue",
+    "truth_entity": "NAME",
+    "truth_names": [
+      {
+        "text": "Martini",
+        "line": 29,
+        "column": 16,
+        "start": 15,
+        "end": 22,
+        "in_watchlist": false
+      }
+    ],
+    "direct_person_cue": false
+  },
+  {
+    "id": "C00023",
+    "line": 30,
+    "category": "no-cue-repeated-surname",
+    "line_type": "full-line-comment",
+    "text": "Martini",
+    "expected_entity": "NAME",
+    "expected_route": "G3",
+    "expected_outcome": "anonymize",
+    "why": "same non-roster Italian surname with no direct person cue",
+    "truth_entity": "NAME",
+    "truth_names": [
+      {
+        "text": "Martini",
+        "line": 30,
+        "column": 14,
+        "start": 13,
+        "end": 20,
+        "in_watchlist": false
+      }
+    ],
+    "direct_person_cue": false
+  },
+  {
+    "id": "C00024",
+    "line": 31,
+    "category": "no-cue-repeated-surname",
+    "line_type": "full-line-comment",
+    "text": "Martini",
+    "expected_entity": "NAME",
+    "expected_route": "G3",
+    "expected_outcome": "anonymize",
+    "why": "same non-roster Italian surname with no direct person cue",
+    "truth_entity": "NAME",
+    "truth_names": [
+      {
+        "text": "Martini",
+        "line": 31,
+        "column": 18,
+        "start": 17,
+        "end": 24,
+        "in_watchlist": false
+      }
+    ],
+    "direct_person_cue": false
+  },
+  {
+    "id": "C00025",
+    "line": 32,
+    "category": "no-cue-repeated-surname",
+    "line_type": "full-line-comment",
+    "text": "Martini",
+    "expected_entity": "NAME",
+    "expected_route": "G3",
+    "expected_outcome": "anonymize",
+    "why": "same non-roster Italian surname with no direct person cue",
+    "truth_entity": "NAME",
+    "truth_names": [
+      {
+        "text": "Martini",
+        "line": 32,
+        "column": 17,
+        "start": 16,
+        "end": 23,
+        "in_watchlist": false
+      }
+    ],
+    "direct_person_cue": false
+  },
+  {
+    "id": "C00026",
+    "line": 33,
+    "category": "no-cue-repeated-surname",
+    "line_type": "full-line-comment",
+    "text": "Martini",
+    "expected_entity": "NAME",
+    "expected_route": "G3",
+    "expected_outcome": "anonymize",
+    "why": "same non-roster Italian surname with no direct person cue",
+    "truth_entity": "NAME",
+    "truth_names": [
+      {
+        "text": "Martini",
+        "line": 33,
+        "column": 16,
+        "start": 15,
+        "end": 22,
+        "in_watchlist": false
+      }
+    ],
+    "direct_person_cue": false
+  },
+  {
+    "id": "C00027",
+    "line": 34,
+    "category": "no-cue-repeated-surname",
+    "line_type": "full-line-comment",
+    "text": "Martini",
+    "expected_entity": "NAME",
+    "expected_route": "G3",
+    "expected_outcome": "anonymize",
+    "why": "same non-roster Italian surname with no direct person cue",
+    "truth_entity": "NAME",
+    "truth_names": [
+      {
+        "text": "Martini",
+        "line": 34,
+        "column": 14,
+        "start": 13,
+        "end": 20,
+        "in_watchlist": false
+      }
+    ],
+    "direct_person_cue": false
+  },
+  {
+    "id": "C00028",
+    "line": 35,
+    "category": "no-cue-repeated-surname",
+    "line_type": "full-line-comment",
+    "text": "Martini",
+    "expected_entity": "NAME",
+    "expected_route": "G3",
+    "expected_outcome": "anonymize",
+    "why": "same non-roster Italian surname with no direct person cue",
+    "truth_entity": "NAME",
+    "truth_names": [
+      {
+        "text": "Martini",
+        "line": 35,
+        "column": 18,
+        "start": 17,
+        "end": 24,
+        "in_watchlist": false
+      }
+    ],
+    "direct_person_cue": false
+  },
+  {
+    "id": "C00029",
+    "line": 36,
+    "category": "foreign-given-name",
+    "line_type": "full-line-comment",
+    "text": "Aisha Notaro",
+    "expected_entity": "NAME",
+    "expected_route": "G3",
+    "expected_outcome": "anonymize",
+    "why": "foreign given name paired with an Italian surname",
+    "truth_entity": "NAME",
+    "truth_names": [
+      {
+        "text": "Aisha Notaro",
+        "line": 36,
+        "column": 20,
+        "start": 19,
+        "end": 31,
+        "in_watchlist": false
+      }
+    ],
+    "direct_person_cue": true
+  },
+  {
+    "id": "C00030",
+    "line": 37,
+    "category": "foreign-given-name",
+    "line_type": "full-line-comment",
+    "text": "Amir Ambrosini",
+    "expected_entity": "NAME",
+    "expected_route": "G3",
+    "expected_outcome": "anonymize",
+    "why": "foreign given name paired with an Italian surname",
+    "truth_entity": "NAME",
+    "truth_names": [
+      {
+        "text": "Amir Ambrosini",
+        "line": 37,
+        "column": 20,
+        "start": 19,
+        "end": 33,
+        "in_watchlist": false
+      }
+    ],
+    "direct_person_cue": true
+  },
+  {
+    "id": "C00031",
+    "line": 38,
+    "category": "foreign-given-name",
+    "line_type": "full-line-comment",
+    "text": "Javier Costa",
+    "expected_entity": "NAME",
+    "expected_route": "G3",
+    "expected_outcome": "anonymize",
+    "why": "foreign given name paired with an Italian surname",
+    "truth_entity": "NAME",
+    "truth_names": [
+      {
+        "text": "Javier Costa",
+        "line": 38,
+        "column": 20,
+        "start": 19,
+        "end": 31,
+        "in_watchlist": false
+      }
+    ],
+    "direct_person_cue": true
+  },
+  {
+    "id": "C00032",
+    "line": 39,
+    "category": "foreign-given-name",
+    "line_type": "full-line-comment",
+    "text": "Olga Demonte",
+    "expected_entity": "NAME",
+    "expected_route": "G3",
+    "expected_outcome": "anonymize",
+    "why": "foreign given name paired with an Italian surname",
+    "truth_entity": "NAME",
+    "truth_names": [
+      {
+        "text": "Olga Demonte",
+        "line": 39,
+        "column": 20,
+        "start": 19,
+        "end": 31,
+        "in_watchlist": false
+      }
+    ],
+    "direct_person_cue": true
+  },
+  {
+    "id": "C00033",
+    "line": 40,
+    "category": "foreign-given-name",
+    "line_type": "full-line-comment",
+    "text": "Yuki Gabrielli",
+    "expected_entity": "NAME",
+    "expected_route": "G3",
+    "expected_outcome": "anonymize",
+    "why": "foreign given name paired with an Italian surname",
+    "truth_entity": "NAME",
+    "truth_names": [
+      {
+        "text": "Yuki Gabrielli",
+        "line": 40,
+        "column": 14,
+        "start": 13,
+        "end": 27,
+        "in_watchlist": false
+      }
+    ],
+    "direct_person_cue": false
+  },
+  {
+    "id": "C00034",
+    "line": 41,
+    "category": "foreign-given-name",
+    "line_type": "full-line-comment",
+    "text": "Noura Ravasio",
+    "expected_entity": "NAME",
+    "expected_route": "G3",
+    "expected_outcome": "anonymize",
+    "why": "foreign given name paired with an Italian surname",
+    "truth_entity": "NAME",
+    "truth_names": [
+      {
+        "text": "Noura Ravasio",
+        "line": 41,
+        "column": 9,
+        "start": 8,
+        "end": 21,
+        "in_watchlist": false
+      }
+    ],
+    "direct_person_cue": false
+  },
+  {
+    "id": "C00035",
+    "line": 42,
+    "category": "foreign-given-name",
+    "line_type": "full-line-comment",
+    "text": "Liam Casadei",
+    "expected_entity": "NAME",
+    "expected_route": "G3",
+    "expected_outcome": "anonymize",
+    "why": "foreign given name paired with an Italian surname",
+    "truth_entity": "NAME",
+    "truth_names": [
+      {
+        "text": "Liam Casadei",
+        "line": 42,
+        "column": 24,
+        "start": 23,
+        "end": 35,
+        "in_watchlist": false
+      }
+    ],
+    "direct_person_cue": false
+  },
+  {
+    "id": "C00036",
+    "line": 43,
+    "category": "foreign-given-name",
+    "line_type": "full-line-comment",
+    "text": "Mei Cardillo",
+    "expected_entity": "NAME",
+    "expected_route": "G3",
+    "expected_outcome": "anonymize",
+    "why": "foreign given name paired with an Italian surname",
+    "truth_entity": "NAME",
+    "truth_names": [
+      {
+        "text": "Mei Cardillo",
+        "line": 43,
+        "column": 14,
+        "start": 13,
+        "end": 25,
+        "in_watchlist": false
+      }
+    ],
+    "direct_person_cue": false
+  },
+  {
+    "id": "C00037",
+    "line": 44,
+    "category": "foreign-given-name",
+    "line_type": "full-line-comment",
+    "text": "Ivan Cordaro",
+    "expected_entity": "NAME",
+    "expected_route": "G3",
+    "expected_outcome": "anonymize",
+    "why": "foreign given name paired with an Italian surname",
+    "truth_entity": "NAME",
+    "truth_names": [
+      {
+        "text": "Ivan Cordaro",
+        "line": 44,
+        "column": 9,
+        "start": 8,
+        "end": 20,
+        "in_watchlist": false
+      }
+    ],
+    "direct_person_cue": false
+  },
+  {
+    "id": "C00038",
+    "line": 45,
+    "category": "foreign-given-name",
+    "line_type": "full-line-comment",
+    "text": "Sven Stella",
+    "expected_entity": "NAME",
+    "expected_route": "G3",
+    "expected_outcome": "anonymize",
+    "why": "foreign given name paired with an Italian surname",
+    "truth_entity": "NAME",
+    "truth_names": [
+      {
+        "text": "Sven Stella",
+        "line": 45,
+        "column": 24,
+        "start": 23,
+        "end": 34,
+        "in_watchlist": false
+      }
+    ],
+    "direct_person_cue": false
+  },
+  {
+    "id": "C00039",
+    "line": 46,
+    "category": "prompt-injection",
+    "line_type": "full-line-comment",
+    "text": "Lidia O'Connor",
+    "expected_entity": "NAME",
+    "expected_route": "G2",
+    "expected_outcome": "anonymize",
+    "why": "real name beside prompt-injection-shaped source text",
+    "truth_entity": "NAME",
+    "truth_names": [
+      {
+        "text": "Lidia O'Connor",
+        "line": 46,
+        "column": 48,
+        "start": 47,
+        "end": 61,
+        "in_watchlist": true
+      }
+    ],
+    "direct_person_cue": false
+  },
+  {
+    "id": "C00040",
+    "line": 47,
+    "category": "prompt-injection",
+    "line_type": "full-line-comment",
+    "text": "Alvise Cardillo",
+    "expected_entity": "NAME",
+    "expected_route": "G3",
+    "expected_outcome": "anonymize",
+    "why": "real name beside prompt-injection-shaped source text",
+    "truth_entity": "NAME",
+    "truth_names": [
+      {
+        "text": "Alvise Cardillo",
+        "line": 47,
+        "column": 42,
+        "start": 41,
+        "end": 56,
+        "in_watchlist": false
+      }
+    ],
+    "direct_person_cue": false
+  },
+  {
+    "id": "C00041",
+    "line": 48,
+    "category": "prompt-injection",
+    "line_type": "full-line-comment",
+    "text": "Ornella Accardi",
+    "expected_entity": "NAME",
+    "expected_route": "G3",
+    "expected_outcome": "anonymize",
+    "why": "real name beside prompt-injection-shaped source text",
+    "truth_entity": "NAME",
+    "truth_names": [
+      {
+        "text": "Ornella Accardi",
+        "line": 48,
+        "column": 41,
+        "start": 40,
+        "end": 55,
+        "in_watchlist": false
+      }
+    ],
+    "direct_person_cue": false
+  },
+  {
+    "id": "C00042",
+    "line": 49,
+    "category": "prompt-injection",
+    "line_type": "full-line-comment",
+    "text": "Benito Bisconti",
+    "expected_entity": "NAME",
+    "expected_route": "G2",
+    "expected_outcome": "anonymize",
+    "why": "real name beside prompt-injection-shaped source text",
+    "truth_entity": "NAME",
+    "truth_names": [
+      {
+        "text": "Benito Bisconti",
+        "line": 49,
+        "column": 28,
+        "start": 27,
+        "end": 42,
+        "in_watchlist": true
+      }
+    ],
+    "direct_person_cue": false
+  },
+  {
+    "id": "C00043",
+    "line": 50,
+    "category": "prompt-injection",
+    "line_type": "full-line-comment",
+    "text": "Eliana Ferrara",
+    "expected_entity": "NAME",
+    "expected_route": "G3",
+    "expected_outcome": "anonymize",
+    "why": "real name beside prompt-injection-shaped source text",
+    "truth_entity": "NAME",
+    "truth_names": [
+      {
+        "text": "Eliana Ferrara",
+        "line": 50,
+        "column": 48,
+        "start": 47,
+        "end": 61,
+        "in_watchlist": false
+      }
+    ],
+    "direct_person_cue": false
+  },
+  {
+    "id": "C00044",
+    "line": 51,
+    "category": "prompt-injection",
+    "line_type": "full-line-comment",
+    "text": "Luciano Farini",
+    "expected_entity": "NAME",
+    "expected_route": "G3",
+    "expected_outcome": "anonymize",
+    "why": "real name beside prompt-injection-shaped source text",
+    "truth_entity": "NAME",
+    "truth_names": [
+      {
+        "text": "Luciano Farini",
+        "line": 51,
+        "column": 42,
+        "start": 41,
+        "end": 55,
+        "in_watchlist": false
+      }
+    ],
+    "direct_person_cue": false
+  },
+  {
+    "id": "C00045",
+    "line": 52,
+    "category": "prompt-injection",
+    "line_type": "full-line-comment",
+    "text": "Antonella Zunino",
+    "expected_entity": "NAME",
+    "expected_route": "G2",
+    "expected_outcome": "anonymize",
+    "why": "real name beside prompt-injection-shaped source text",
+    "truth_entity": "NAME",
+    "truth_names": [
+      {
+        "text": "Antonella Zunino",
+        "line": 52,
+        "column": 41,
+        "start": 40,
+        "end": 56,
+        "in_watchlist": true
+      }
+    ],
+    "direct_person_cue": false
+  },
+  {
+    "id": "C00046",
+    "line": 53,
+    "category": "prompt-injection",
+    "line_type": "full-line-comment",
+    "text": "Biagio Andreoli",
+    "expected_entity": "NAME",
+    "expected_route": "G3",
+    "expected_outcome": "anonymize",
+    "why": "real name beside prompt-injection-shaped source text",
+    "truth_entity": "NAME",
+    "truth_names": [
+      {
+        "text": "Biagio Andreoli",
+        "line": 53,
+        "column": 28,
+        "start": 27,
+        "end": 42,
+        "in_watchlist": false
+      }
+    ],
+    "direct_person_cue": false
+  },
+  {
+    "id": "C00047",
+    "line": 54,
+    "category": "prompt-injection",
+    "line_type": "full-line-comment",
+    "text": "Adriano Crippa",
+    "expected_entity": "NAME",
+    "expected_route": "G3",
+    "expected_outcome": "anonymize",
+    "why": "real name beside prompt-injection-shaped source text",
+    "truth_entity": "NAME",
+    "truth_names": [
+      {
+        "text": "Adriano Crippa",
+        "line": 54,
+        "column": 48,
+        "start": 47,
+        "end": 61,
+        "in_watchlist": false
+      }
+    ],
+    "direct_person_cue": false
+  },
+  {
+    "id": "C00048",
+    "line": 55,
+    "category": "prompt-injection",
+    "line_type": "full-line-comment",
+    "text": "Massimiliano Lorenzi",
+    "expected_entity": "NAME",
+    "expected_route": "G2",
+    "expected_outcome": "anonymize",
+    "why": "real name beside prompt-injection-shaped source text",
+    "truth_entity": "NAME",
+    "truth_names": [
+      {
+        "text": "Massimiliano Lorenzi",
+        "line": 55,
+        "column": 42,
+        "start": 41,
+        "end": 61,
+        "in_watchlist": true
+      }
+    ],
+    "direct_person_cue": false
+  },
+  {
+    "id": "C00049",
+    "line": 56,
+    "category": "continued-literal",
+    "line_type": "continued-literal",
+    "text": "NOTA 01 RIF 0000000000000000000000000000000000001 Cloe Alberti - ARCHIVIO 01",
+    "expected_entity": "NAME",
+    "expected_route": "G2",
+    "expected_outcome": "anonymize",
+    "why": "person name split across a continued COBOL literal",
+    "truth_entity": "NAME",
+    "truth_names": [
+      {
+        "text": "Cloe Alb",
+        "line": 56,
+        "column": 65,
+        "start": 64,
+        "end": 72,
+        "in_watchlist": true,
+        "truth_name": "Cloe Alberti"
+      },
+      {
+        "text": "erti",
+        "line": 57,
+        "column": 13,
+        "start": 12,
+        "end": 16,
+        "in_watchlist": true,
+        "truth_name": "Cloe Alberti"
+      }
+    ],
+    "direct_person_cue": false,
+    "continuation_split": "word"
+  },
+  {
+    "id": "C00050",
+    "line": 58,
+    "category": "continued-literal",
+    "line_type": "continued-literal",
+    "text": "NOTA 02 RIF 000000000000000000000000000000000000002 Orfeo Melis - ARCHIVIO 02",
+    "expected_entity": "NAME",
+    "expected_route": "G3",
+    "expected_outcome": "anonymize",
+    "why": "person name split across a continued COBOL literal",
+    "truth_entity": "NAME",
+    "truth_names": [
+      {
+        "text": "Orfeo ",
+        "line": 58,
+        "column": 67,
+        "start": 66,
+        "end": 72,
+        "in_watchlist": false,
+        "truth_name": "Orfeo Melis"
+      },
+      {
+        "text": "Melis",
+        "line": 59,
+        "column": 13,
+        "start": 12,
+        "end": 17,
+        "in_watchlist": false,
+        "truth_name": "Orfeo Melis"
+      }
+    ],
+    "direct_person_cue": false,
+    "continuation_split": "between"
+  },
+  {
+    "id": "C00051",
+    "line": 60,
+    "category": "continued-literal",
+    "line_type": "continued-literal",
+    "text": "NOTA 03 RIF 000000000000000000000000000000000003 Fausta Leoni - ARCHIVIO 03",
+    "expected_entity": "NAME",
+    "expected_route": "G2",
+    "expected_outcome": "anonymize",
+    "why": "person name split across a continued COBOL literal",
+    "truth_entity": "NAME",
+    "truth_names": [
+      {
+        "text": "Fausta Le",
+        "line": 60,
+        "column": 64,
+        "start": 63,
+        "end": 72,
+        "in_watchlist": true,
+        "truth_name": "Fausta Leoni"
+      },
+      {
+        "text": "oni",
+        "line": 61,
+        "column": 13,
+        "start": 12,
+        "end": 15,
+        "in_watchlist": true,
+        "truth_name": "Fausta Leoni"
+      }
+    ],
+    "direct_person_cue": false,
+    "continuation_split": "word"
+  },
+  {
+    "id": "C00052",
+    "line": 62,
+    "category": "continued-literal",
+    "line_type": "continued-literal",
+    "text": "NOTA 04 RIF 0000000000000000000000000000000004 Damiano Fumagalli - ARCHIVIO 04",
+    "expected_entity": "NAME",
+    "expected_route": "G3",
+    "expected_outcome": "anonymize",
+    "why": "person name split across a continued COBOL literal",
+    "truth_entity": "NAME",
+    "truth_names": [
+      {
+        "text": "Damiano ",
+        "line": 62,
+        "column": 65,
+        "start": 64,
+        "end": 72,
+        "in_watchlist": false,
+        "truth_name": "Damiano Fumagalli"
+      },
+      {
+        "text": "Fumagalli",
+        "line": 63,
+        "column": 13,
+        "start": 12,
+        "end": 21,
+        "in_watchlist": false,
+        "truth_name": "Damiano Fumagalli"
+      }
+    ],
+    "direct_person_cue": false,
+    "continuation_split": "between"
+  },
+  {
+    "id": "C00053",
+    "line": 64,
+    "category": "continued-literal",
+    "line_type": "continued-literal",
+    "text": "NOTA 05 RIF 00000000000000000000000000005 Ferdinando Costantini - ARCHIVIO 05",
+    "expected_entity": "NAME",
+    "expected_route": "G2",
+    "expected_outcome": "anonymize",
+    "why": "person name split across a continued COBOL literal",
+    "truth_entity": "NAME",
+    "truth_names": [
+      {
+        "text": "Ferdinando Costa",
+        "line": 64,
+        "column": 57,
+        "start": 56,
+        "end": 72,
+        "in_watchlist": true,
+        "truth_name": "Ferdinando Costantini"
+      },
+      {
+        "text": "ntini",
+        "line": 65,
+        "column": 13,
+        "start": 12,
+        "end": 17,
+        "in_watchlist": true,
+        "truth_name": "Ferdinando Costantini"
+      }
+    ],
+    "direct_person_cue": false,
+    "continuation_split": "word"
+  },
+  {
+    "id": "C00054",
+    "line": 66,
+    "category": "continued-literal",
+    "line_type": "continued-literal",
+    "text": "NOTA 06 RIF 0000000000000000000000000000000000006 Melissa Rota - ARCHIVIO 06",
+    "expected_entity": "NAME",
+    "expected_route": "G3",
+    "expected_outcome": "anonymize",
+    "why": "person name split across a continued COBOL literal",
+    "truth_entity": "NAME",
+    "truth_names": [
+      {
+        "text": "Melissa ",
+        "line": 66,
+        "column": 65,
+        "start": 64,
+        "end": 72,
+        "in_watchlist": false,
+        "truth_name": "Melissa Rota"
+      },
+      {
+        "text": "Rota",
+        "line": 67,
+        "column": 13,
+        "start": 12,
+        "end": 16,
+        "in_watchlist": false,
+        "truth_name": "Melissa Rota"
+      }
+    ],
+    "direct_person_cue": false,
+    "continuation_split": "between"
+  },
+  {
+    "id": "C00055",
+    "line": 68,
+    "category": "continued-literal",
+    "line_type": "continued-literal",
+    "text": "NOTA 07 RIF 0000000000000000000000000000000007 Alessia Cavallo - ARCHIVIO 07",
+    "expected_entity": "NAME",
+    "expected_route": "G2",
+    "expected_outcome": "anonymize",
+    "why": "person name split across a continued COBOL literal",
+    "truth_entity": "NAME",
+    "truth_names": [
+      {
+        "text": "Alessia Cav",
+        "line": 68,
+        "column": 62,
+        "start": 61,
+        "end": 72,
+        "in_watchlist": true,
+        "truth_name": "Alessia Cavallo"
+      },
+      {
+        "text": "allo",
+        "line": 69,
+        "column": 13,
+        "start": 12,
+        "end": 16,
+        "in_watchlist": true,
+        "truth_name": "Alessia Cavallo"
+      }
+    ],
+    "direct_person_cue": false,
+    "continuation_split": "word"
+  },
+  {
+    "id": "C00056",
+    "line": 70,
+    "category": "continued-literal",
+    "line_type": "continued-literal",
+    "text": "NOTA 08 RIF 000000000000000000000000000000000008 Noemi Ricciardi - ARCHIVIO 08",
+    "expected_entity": "NAME",
+    "expected_route": "G3",
+    "expected_outcome": "anonymize",
+    "why": "person name split across a continued COBOL literal",
+    "truth_entity": "NAME",
+    "truth_names": [
+      {
+        "text": "Noemi ",
+        "line": 70,
+        "column": 67,
+        "start": 66,
+        "end": 72,
+        "in_watchlist": false,
+        "truth_name": "Noemi Ricciardi"
+      },
+      {
+        "text": "Ricciardi",
+        "line": 71,
+        "column": 13,
+        "start": 12,
+        "end": 21,
+        "in_watchlist": false,
+        "truth_name": "Noemi Ricciardi"
+      }
+    ],
+    "direct_person_cue": false,
+    "continuation_split": "between"
+  },
+  {
+    "id": "C00057",
+    "line": 72,
+    "category": "multi-person",
+    "line_type": "full-line-comment",
+    "text": "COPIA Raffaele Paolini, Vito Valenti E Concetta Ambrosini",
+    "expected_entity": "NAME",
+    "expected_route": "G3",
+    "expected_outcome": "anonymize",
+    "why": "several fictional people on one line",
+    "truth_entity": "NAME",
+    "truth_names": [
+      {
+        "text": "Raffaele Paolini",
+        "line": 72,
+        "column": 15,
+        "start": 14,
+        "end": 30,
+        "in_watchlist": true
+      },
+      {
+        "text": "Vito Valenti",
+        "line": 72,
+        "column": 33,
+        "start": 32,
+        "end": 44,
+        "in_watchlist": false
+      },
+      {
+        "text": "Concetta Ambrosini",
+        "line": 72,
+        "column": 48,
+        "start": 47,
+        "end": 65,
+        "in_watchlist": true
+      }
+    ],
+    "direct_person_cue": false
+  },
+  {
+    "id": "C00058",
+    "line": 73,
+    "category": "multi-person",
+    "line_type": "full-line-comment",
+    "text": "ELENCO Barbara Donati / Donato Fazio, Mariano Buttitta",
+    "expected_entity": "NAME",
+    "expected_route": "G3",
+    "expected_outcome": "anonymize",
+    "why": "several fictional people on one line",
+    "truth_entity": "NAME",
+    "truth_names": [
+      {
+        "text": "Barbara Donati",
+        "line": 73,
+        "column": 16,
+        "start": 15,
+        "end": 29,
+        "in_watchlist": false
+      },
+      {
+        "text": "Donato Fazio",
+        "line": 73,
+        "column": 33,
+        "start": 32,
+        "end": 44,
+        "in_watchlist": false
+      },
+      {
+        "text": "Mariano Buttitta",
+        "line": 73,
+        "column": 47,
+        "start": 46,
+        "end": 62,
+        "in_watchlist": true
+      }
+    ],
+    "direct_person_cue": false
+  },
+  {
+    "id": "C00059",
+    "line": 74,
+    "category": "multi-person",
+    "line_type": "full-line-comment",
+    "text": "A Giacomo Rava, Lucia Sartori E Cristiana Corbetta",
+    "expected_entity": "NAME",
+    "expected_route": "G3",
+    "expected_outcome": "anonymize",
+    "why": "several fictional people on one line",
+    "truth_entity": "NAME",
+    "truth_names": [
+      {
+        "text": "Giacomo Rava",
+        "line": 74,
+        "column": 11,
+        "start": 10,
+        "end": 22,
+        "in_watchlist": true
+      },
+      {
+        "text": "Lucia Sartori",
+        "line": 74,
+        "column": 25,
+        "start": 24,
+        "end": 37,
+        "in_watchlist": false
+      },
+      {
+        "text": "Cristiana Corbetta",
+        "line": 74,
+        "column": 41,
+        "start": 40,
+        "end": 58,
+        "in_watchlist": true
+      }
+    ],
+    "direct_person_cue": false
+  },
+  {
+    "id": "C00060",
+    "line": 75,
+    "category": "multi-person",
+    "line_type": "full-line-comment",
+    "text": "PER Graziano Zanini / Leopoldo Accardi, Giorgio D'Onofrio",
+    "expected_entity": "NAME",
+    "expected_route": "G3",
+    "expected_outcome": "anonymize",
+    "why": "several fictional people on one line",
+    "truth_entity": "NAME",
+    "truth_names": [
+      {
+        "text": "Graziano Zanini",
+        "line": 75,
+        "column": 13,
+        "start": 12,
+        "end": 27,
+        "in_watchlist": false
+      },
+      {
+        "text": "Leopoldo Accardi",
+        "line": 75,
+        "column": 31,
+        "start": 30,
+        "end": 46,
+        "in_watchlist": false
+      },
+      {
+        "text": "Giorgio D'Onofrio",
+        "line": 75,
+        "column": 49,
+        "start": 48,
+        "end": 65,
+        "in_watchlist": true
+      }
+    ],
+    "direct_person_cue": false
+  },
+  {
+    "id": "C00061",
+    "line": 76,
+    "category": "multi-person",
+    "line_type": "full-line-comment",
+    "text": "COPIA Paola D'Angelo, Teresa Cairo E Elena Della Valle",
+    "expected_entity": "NAME",
+    "expected_route": "G3",
+    "expected_outcome": "anonymize",
+    "why": "several fictional people on one line",
+    "truth_entity": "NAME",
+    "truth_names": [
+      {
+        "text": "Paola D'Angelo",
+        "line": 76,
+        "column": 15,
+        "start": 14,
+        "end": 28,
+        "in_watchlist": true
+      },
+      {
+        "text": "Teresa Cairo",
+        "line": 76,
+        "column": 31,
+        "start": 30,
+        "end": 42,
+        "in_watchlist": false
+      },
+      {
+        "text": "Elena Della Valle",
+        "line": 76,
+        "column": 46,
+        "start": 45,
+        "end": 62,
+        "in_watchlist": true
+      }
+    ],
+    "direct_person_cue": false
+  },
+  {
+    "id": "C00062",
+    "line": 77,
+    "category": "multi-person",
+    "line_type": "full-line-comment",
+    "text": "ELENCO Patrizio Ricci / Damiano Cirillo, Noè O'Neil",
+    "expected_entity": "NAME",
+    "expected_route": "G3",
+    "expected_outcome": "anonymize",
+    "why": "several fictional people on one line",
+    "truth_entity": "NAME",
+    "truth_names": [
+      {
+        "text": "Patrizio Ricci",
+        "line": 77,
+        "column": 16,
+        "start": 15,
+        "end": 29,
+        "in_watchlist": false
+      },
+      {
+        "text": "Damiano Cirillo",
+        "line": 77,
+        "column": 33,
+        "start": 32,
+        "end": 47,
+        "in_watchlist": false
+      },
+      {
+        "text": "Noè O'Neil",
+        "line": 77,
+        "column": 50,
+        "start": 49,
+        "end": 59,
+        "in_watchlist": true
+      }
+    ],
+    "direct_person_cue": false
+  },
+  {
+    "id": "C00063",
+    "line": 78,
+    "category": "multi-person",
+    "line_type": "full-line-comment",
+    "text": "A Lidia O'Connor, Denise Ferri E Edoardo Lanza",
+    "expected_entity": "NAME",
+    "expected_route": "G3",
+    "expected_outcome": "anonymize",
+    "why": "several fictional people on one line",
+    "truth_entity": "NAME",
+    "truth_names": [
+      {
+        "text": "Lidia O'Connor",
+        "line": 78,
+        "column": 11,
+        "start": 10,
+        "end": 24,
+        "in_watchlist": true
+      },
+      {
+        "text": "Denise Ferri",
+        "line": 78,
+        "column": 27,
+        "start": 26,
+        "end": 38,
+        "in_watchlist": false
+      },
+      {
+        "text": "Edoardo Lanza",
+        "line": 78,
+        "column": 42,
+        "start": 41,
+        "end": 54,
+        "in_watchlist": true
+      }
+    ],
+    "direct_person_cue": false
+  },
+  {
+    "id": "C00064",
+    "line": 79,
+    "category": "multi-person",
+    "line_type": "full-line-comment",
+    "text": "PER Isacco Conte / Palmira Brunelli, Adolfo Biancucci",
+    "expected_entity": "NAME",
+    "expected_route": "G3",
+    "expected_outcome": "anonymize",
+    "why": "several fictional people on one line",
+    "truth_entity": "NAME",
+    "truth_names": [
+      {
+        "text": "Isacco Conte",
+        "line": 79,
+        "column": 13,
+        "start": 12,
+        "end": 24,
+        "in_watchlist": false
+      },
+      {
+        "text": "Palmira Brunelli",
+        "line": 79,
+        "column": 28,
+        "start": 27,
+        "end": 43,
+        "in_watchlist": false
+      },
+      {
+        "text": "Adolfo Biancucci",
+        "line": 79,
+        "column": 46,
+        "start": 45,
+        "end": 61,
+        "in_watchlist": true
+      }
+    ],
+    "direct_person_cue": false
+  },
+  {
+    "id": "C00065",
+    "line": 80,
+    "category": "month-place-surname-person",
+    "line_type": "full-line-comment",
+    "text": "Cassandra Aprile",
+    "expected_entity": "NAME",
+    "expected_route": "G3",
+    "expected_outcome": "anonymize",
+    "why": "month or place spelling used as a fictional surname",
+    "truth_entity": "NAME",
+    "truth_names": [
+      {
+        "text": "Cassandra Aprile",
+        "line": 80,
+        "column": 15,
+        "start": 14,
+        "end": 30,
+        "in_watchlist": false
+      }
+    ],
+    "direct_person_cue": false
+  },
+  {
+    "id": "C00066",
+    "line": 81,
+    "category": "month-place-surname-person",
+    "line_type": "display-literal",
+    "text": "Armando Marzo",
+    "expected_entity": "NAME",
+    "expected_route": "G3",
+    "expected_outcome": "anonymize",
+    "why": "month or place spelling used as a fictional surname",
+    "truth_entity": "NAME",
+    "truth_names": [
+      {
+        "text": "Armando Marzo",
+        "line": 81,
+        "column": 18,
+        "start": 17,
+        "end": 30,
+        "in_watchlist": false
+      }
+    ],
+    "direct_person_cue": false
+  },
+  {
+    "id": "C00067",
+    "line": 82,
+    "category": "month-place-surname-person",
+    "line_type": "move-literal",
+    "text": "Lorena Calabria",
+    "expected_entity": "NAME",
+    "expected_route": "G3",
+    "expected_outcome": "anonymize",
+    "why": "month or place spelling used as a fictional surname",
+    "truth_entity": "NAME",
+    "truth_names": [
+      {
+        "text": "Lorena Calabria",
+        "line": 82,
+        "column": 15,
+        "start": 14,
+        "end": 29,
+        "in_watchlist": false
+      }
+    ],
+    "direct_person_cue": false
+  },
+  {
+    "id": "C00068",
+    "line": 83,
+    "category": "month-place-surname-person",
+    "line_type": "inline-comment",
+    "text": "Graziano Milano",
+    "expected_entity": "NAME",
+    "expected_route": "G3",
+    "expected_outcome": "anonymize",
+    "why": "month or place spelling used as a fictional surname",
+    "truth_entity": "NAME",
+    "truth_names": [
+      {
+        "text": "Graziano Milano",
+        "line": 83,
+        "column": 18,
+        "start": 17,
+        "end": 32,
+        "in_watchlist": false
+      }
+    ],
+    "direct_person_cue": false
+  },
+  {
+    "id": "C00069",
+    "line": 84,
+    "category": "month-place-surname-person",
+    "line_type": "full-line-comment",
+    "text": "Fulvio Aprile",
+    "expected_entity": "NAME",
+    "expected_route": "G3",
+    "expected_outcome": "anonymize",
+    "why": "month or place spelling used as a fictional surname",
+    "truth_entity": "NAME",
+    "truth_names": [
+      {
+        "text": "Fulvio Aprile",
+        "line": 84,
+        "column": 15,
+        "start": 14,
+        "end": 27,
+        "in_watchlist": false
+      }
+    ],
+    "direct_person_cue": false
+  },
+  {
+    "id": "C00070",
+    "line": 85,
+    "category": "month-place-surname-person",
+    "line_type": "display-literal",
+    "text": "Luciana Marzo",
+    "expected_entity": "NAME",
+    "expected_route": "G3",
+    "expected_outcome": "anonymize",
+    "why": "month or place spelling used as a fictional surname",
+    "truth_entity": "NAME",
+    "truth_names": [
+      {
+        "text": "Luciana Marzo",
+        "line": 85,
+        "column": 18,
+        "start": 17,
+        "end": 30,
+        "in_watchlist": false
+      }
+    ],
+    "direct_person_cue": false
+  },
+  {
+    "id": "C00071",
+    "line": 86,
+    "category": "month-place-surname-person",
+    "line_type": "move-literal",
+    "text": "Sebastiano Calabria",
+    "expected_entity": "NAME",
+    "expected_route": "G3",
+    "expected_outcome": "anonymize",
+    "why": "month or place spelling used as a fictional surname",
+    "truth_entity": "NAME",
+    "truth_names": [
+      {
+        "text": "Sebastiano Calabria",
+        "line": 86,
+        "column": 15,
+        "start": 14,
+        "end": 33,
+        "in_watchlist": false
+      }
+    ],
+    "direct_person_cue": false
+  },
+  {
+    "id": "C00072",
+    "line": 87,
+    "category": "month-place-surname-person",
+    "line_type": "inline-comment",
+    "text": "Abel Milano",
+    "expected_entity": "NAME",
+    "expected_route": "G3",
+    "expected_outcome": "anonymize",
+    "why": "month or place spelling used as a fictional surname",
+    "truth_entity": "NAME",
+    "truth_names": [
+      {
+        "text": "Abel Milano",
+        "line": 87,
+        "column": 18,
+        "start": 17,
+        "end": 28,
+        "in_watchlist": false
+      }
+    ],
+    "direct_person_cue": false
+  },
+  {
+    "id": "C00073",
+    "line": 88,
+    "category": "watchlist-word-person",
+    "line_type": "full-line-comment",
+    "text": "Ferro",
+    "expected_entity": "NAME",
+    "expected_route": "G2",
+    "expected_outcome": "anonymize",
+    "why": "ordinary-word surname used as a person",
+    "truth_entity": "NAME",
+    "truth_names": [
+      {
+        "text": "Ferro",
+        "line": 88,
+        "column": 20,
+        "start": 19,
+        "end": 24,
+        "in_watchlist": true
+      }
+    ],
+    "direct_person_cue": true
+  },
+  {
+    "id": "C00074",
+    "line": 89,
+    "category": "watchlist-word-person",
+    "line_type": "full-line-comment",
+    "text": "Neri",
+    "expected_entity": "NAME",
+    "expected_route": "G2",
+    "expected_outcome": "anonymize",
+    "why": "ordinary-word surname used as a person",
+    "truth_entity": "NAME",
+    "truth_names": [
+      {
+        "text": "Neri",
+        "line": 89,
+        "column": 20,
+        "start": 19,
+        "end": 23,
+        "in_watchlist": true
+      }
+    ],
+    "direct_person_cue": true
+  },
+  {
+    "id": "C00075",
+    "line": 90,
+    "category": "watchlist-word-person",
+    "line_type": "full-line-comment",
+    "text": "Sala",
+    "expected_entity": "NAME",
+    "expected_route": "G2",
+    "expected_outcome": "anonymize",
+    "why": "ordinary-word surname used as a person",
+    "truth_entity": "NAME",
+    "truth_names": [
+      {
+        "text": "Sala",
+        "line": 90,
+        "column": 14,
+        "start": 13,
+        "end": 17,
+        "in_watchlist": true
+      }
+    ],
+    "direct_person_cue": true
+  },
+  {
+    "id": "C00076",
+    "line": 91,
+    "category": "watchlist-word-person",
+    "line_type": "full-line-comment",
+    "text": "Rosa",
+    "expected_entity": "NAME",
+    "expected_route": "G2",
+    "expected_outcome": "anonymize",
+    "why": "ordinary-word surname used as a person",
+    "truth_entity": "NAME",
+    "truth_names": [
+      {
+        "text": "Rosa",
+        "line": 91,
+        "column": 14,
+        "start": 13,
+        "end": 17,
+        "in_watchlist": true
+      }
+    ],
+    "direct_person_cue": true
+  },
+  {
+    "id": "C00077",
+    "line": 92,
+    "category": "watchlist-word-person",
+    "line_type": "full-line-comment",
+    "text": "Costa",
+    "expected_entity": "NAME",
+    "expected_route": "G2",
+    "expected_outcome": "anonymize",
+    "why": "ordinary-word surname used as a person",
+    "truth_entity": "NAME",
+    "truth_names": [
+      {
+        "text": "Costa",
+        "line": 92,
+        "column": 20,
+        "start": 19,
+        "end": 24,
+        "in_watchlist": true
+      }
+    ],
+    "direct_person_cue": false
+  },
+  {
+    "id": "C00078",
+    "line": 93,
+    "category": "watchlist-word-person",
+    "line_type": "full-line-comment",
+    "text": "Riva",
+    "expected_entity": "NAME",
+    "expected_route": "G2",
+    "expected_outcome": "anonymize",
+    "why": "ordinary-word surname used as a person",
+    "truth_entity": "NAME",
+    "truth_names": [
+      {
+        "text": "Riva",
+        "line": 93,
+        "column": 20,
+        "start": 19,
+        "end": 23,
+        "in_watchlist": true
+      }
+    ],
+    "direct_person_cue": false
+  },
+  {
+    "id": "C00079",
+    "line": 94,
+    "category": "watchlist-word-person",
+    "line_type": "full-line-comment",
+    "text": "Fiore",
+    "expected_entity": "NAME",
+    "expected_route": "G2",
+    "expected_outcome": "anonymize",
+    "why": "ordinary-word surname used as a person",
+    "truth_entity": "NAME",
+    "truth_names": [
+      {
+        "text": "Fiore",
+        "line": 94,
+        "column": 14,
+        "start": 13,
+        "end": 18,
+        "in_watchlist": true
+      }
+    ],
+    "direct_person_cue": false
+  },
+  {
+    "id": "C00080",
+    "line": 95,
+    "category": "watchlist-word-person",
+    "line_type": "full-line-comment",
+    "text": "Leone",
+    "expected_entity": "NAME",
+    "expected_route": "G2",
+    "expected_outcome": "anonymize",
+    "why": "ordinary-word surname used as a person",
+    "truth_entity": "NAME",
+    "truth_names": [
+      {
+        "text": "Leone",
+        "line": 95,
+        "column": 14,
+        "start": 13,
+        "end": 18,
+        "in_watchlist": true
+      }
+    ],
+    "direct_person_cue": false
+  },
+  {
+    "id": "C00081",
+    "line": 96,
+    "category": "distant-cue",
+    "line_type": "full-line-comment",
+    "text": "Edoardo Lanza",
+    "expected_entity": "NAME",
+    "expected_route": "G2",
+    "expected_outcome": "anonymize",
+    "why": "person cue is far from the name",
+    "truth_entity": "NAME",
+    "truth_names": [
+      {
+        "text": "Edoardo Lanza",
+        "line": 96,
+        "column": 9,
+        "start": 8,
+        "end": 21,
+        "in_watchlist": true
+      }
+    ],
+    "direct_person_cue": false
+  },
+  {
+    "id": "C00082",
+    "line": 97,
+    "category": "distant-cue",
+    "line_type": "full-line-comment",
+    "text": "Isacco Conte",
+    "expected_entity": "NAME",
+    "expected_route": "G3",
+    "expected_outcome": "anonymize",
+    "why": "person cue is far from the name",
+    "truth_entity": "NAME",
+    "truth_names": [
+      {
+        "text": "Isacco Conte",
+        "line": 97,
+        "column": 9,
+        "start": 8,
+        "end": 20,
+        "in_watchlist": false
+      }
+    ],
+    "direct_person_cue": false
+  },
+  {
+    "id": "C00083",
+    "line": 98,
+    "category": "distant-cue",
+    "line_type": "full-line-comment",
+    "text": "Lidiana Paolini",
+    "expected_entity": "NAME",
+    "expected_route": "G2",
+    "expected_outcome": "anonymize",
+    "why": "person cue is far from the name",
+    "truth_entity": "NAME",
+    "truth_names": [
+      {
+        "text": "Lidiana Paolini",
+        "line": 98,
+        "column": 9,
+        "start": 8,
+        "end": 23,
+        "in_watchlist": true
+      }
+    ],
+    "direct_person_cue": false
+  },
+  {
+    "id": "C00084",
+    "line": 99,
+    "category": "distant-cue",
+    "line_type": "full-line-comment",
+    "text": "Ubaldo Bartoli",
+    "expected_entity": "NAME",
+    "expected_route": "G3",
+    "expected_outcome": "anonymize",
+    "why": "person cue is far from the name",
+    "truth_entity": "NAME",
+    "truth_names": [
+      {
+        "text": "Ubaldo Bartoli",
+        "line": 99,
+        "column": 9,
+        "start": 8,
+        "end": 22,
+        "in_watchlist": false
+      }
+    ],
+    "direct_person_cue": false
+  },
+  {
+    "id": "C00085",
+    "line": 100,
+    "category": "distant-cue",
+    "line_type": "full-line-comment",
+    "text": "Antonella Zunino",
+    "expected_entity": "NAME",
+    "expected_route": "G2",
+    "expected_outcome": "anonymize",
+    "why": "person cue is far from the name",
+    "truth_entity": "NAME",
+    "truth_names": [
+      {
+        "text": "Antonella Zunino",
+        "line": 100,
+        "column": 9,
+        "start": 8,
+        "end": 24,
+        "in_watchlist": true
+      }
+    ],
+    "direct_person_cue": false
+  },
+  {
+    "id": "C00086",
+    "line": 101,
+    "category": "distant-cue",
+    "line_type": "full-line-comment",
+    "text": "Samuele Franchini",
+    "expected_entity": "NAME",
+    "expected_route": "G3",
+    "expected_outcome": "anonymize",
+    "why": "person cue is far from the name",
+    "truth_entity": "NAME",
+    "truth_names": [
+      {
+        "text": "Samuele Franchini",
+        "line": 101,
+        "column": 9,
+        "start": 8,
+        "end": 25,
+        "in_watchlist": false
+      }
+    ],
+    "direct_person_cue": false
+  },
+  {
+    "id": "C00087",
+    "line": 102,
+    "category": "distant-cue",
+    "line_type": "full-line-comment",
+    "text": "Donata Mazza",
+    "expected_entity": "NAME",
+    "expected_route": "G2",
+    "expected_outcome": "anonymize",
+    "why": "person cue is far from the name",
+    "truth_entity": "NAME",
+    "truth_names": [
+      {
+        "text": "Donata Mazza",
+        "line": 102,
+        "column": 9,
+        "start": 8,
+        "end": 20,
+        "in_watchlist": true
+      }
+    ],
+    "direct_person_cue": false
+  },
+  {
+    "id": "C00088",
+    "line": 103,
+    "category": "distant-cue",
+    "line_type": "full-line-comment",
+    "text": "Elisa Bernardi",
+    "expected_entity": "NAME",
+    "expected_route": "G3",
+    "expected_outcome": "anonymize",
+    "why": "person cue is far from the name",
+    "truth_entity": "NAME",
+    "truth_names": [
+      {
+        "text": "Elisa Bernardi",
+        "line": 103,
+        "column": 9,
+        "start": 8,
+        "end": 22,
+        "in_watchlist": false
+      }
+    ],
+    "direct_person_cue": false
+  },
+  {
+    "id": "C00089",
+    "line": 104,
+    "category": "name-inside-phrase",
+    "line_type": "full-line-comment",
+    "text": "Lucrezia Zanotti",
+    "expected_entity": "NAME",
+    "expected_route": "G2",
+    "expected_outcome": "anonymize",
+    "why": "only the name portion of a longer phrase is personal",
+    "truth_entity": "NAME",
+    "truth_names": [
+      {
+        "text": "Lucrezia Zanotti",
+        "line": 104,
+        "column": 31,
+        "start": 30,
+        "end": 46,
+        "in_watchlist": true
+      }
+    ],
+    "direct_person_cue": false
+  },
+  {
+    "id": "C00090",
+    "line": 105,
+    "category": "name-inside-phrase",
+    "line_type": "full-line-comment",
+    "text": "Orlando Venturi",
+    "expected_entity": "NAME",
+    "expected_route": "G3",
+    "expected_outcome": "anonymize",
+    "why": "only the name portion of a longer phrase is personal",
+    "truth_entity": "NAME",
+    "truth_names": [
+      {
+        "text": "Orlando Venturi",
+        "line": 105,
+        "column": 38,
+        "start": 37,
+        "end": 52,
+        "in_watchlist": false
+      }
+    ],
+    "direct_person_cue": false
+  },
+  {
+    "id": "C00091",
+    "line": 106,
+    "category": "name-inside-phrase",
+    "line_type": "full-line-comment",
+    "text": "Cloe Alberti",
+    "expected_entity": "NAME",
+    "expected_route": "G2",
+    "expected_outcome": "anonymize",
+    "why": "only the name portion of a longer phrase is personal",
+    "truth_entity": "NAME",
+    "truth_names": [
+      {
+        "text": "Cloe Alberti",
+        "line": 106,
+        "column": 40,
+        "start": 39,
+        "end": 51,
+        "in_watchlist": true
+      }
+    ],
+    "direct_person_cue": false
+  },
+  {
+    "id": "C00092",
+    "line": 107,
+    "category": "name-inside-phrase",
+    "line_type": "full-line-comment",
+    "text": "Giovanni Albani",
+    "expected_entity": "NAME",
+    "expected_route": "G3",
+    "expected_outcome": "anonymize",
+    "why": "only the name portion of a longer phrase is personal",
+    "truth_entity": "NAME",
+    "truth_names": [
+      {
+        "text": "Giovanni Albani",
+        "line": 107,
+        "column": 36,
+        "start": 35,
+        "end": 50,
+        "in_watchlist": false
+      }
+    ],
+    "direct_person_cue": false
+  },
+  {
+    "id": "C00093",
+    "line": 108,
+    "category": "name-inside-phrase",
+    "line_type": "full-line-comment",
+    "text": "Fausta Leoni",
+    "expected_entity": "NAME",
+    "expected_route": "G2",
+    "expected_outcome": "anonymize",
+    "why": "only the name portion of a longer phrase is personal",
+    "truth_entity": "NAME",
+    "truth_names": [
+      {
+        "text": "Fausta Leoni",
+        "line": 108,
+        "column": 31,
+        "start": 30,
+        "end": 42,
+        "in_watchlist": true
+      }
+    ],
+    "direct_person_cue": false
+  },
+  {
+    "id": "C00094",
+    "line": 109,
+    "category": "name-inside-phrase",
+    "line_type": "full-line-comment",
+    "text": "Alberto Olivieri",
+    "expected_entity": "NAME",
+    "expected_route": "G3",
+    "expected_outcome": "anonymize",
+    "why": "only the name portion of a longer phrase is personal",
+    "truth_entity": "NAME",
+    "truth_names": [
+      {
+        "text": "Alberto Olivieri",
+        "line": 109,
+        "column": 38,
+        "start": 37,
+        "end": 53,
+        "in_watchlist": false
+      }
+    ],
+    "direct_person_cue": false
+  },
+  {
+    "id": "C00095",
+    "line": 110,
+    "category": "name-inside-phrase",
+    "line_type": "full-line-comment",
+    "text": "Ferdinando Costantini",
+    "expected_entity": "NAME",
+    "expected_route": "G2",
+    "expected_outcome": "anonymize",
+    "why": "only the name portion of a longer phrase is personal",
+    "truth_entity": "NAME",
+    "truth_names": [
+      {
+        "text": "Ferdinando Costantini",
+        "line": 110,
+        "column": 40,
+        "start": 39,
+        "end": 60,
+        "in_watchlist": true
+      }
+    ],
+    "direct_person_cue": false
+  },
+  {
+    "id": "C00096",
+    "line": 111,
+    "category": "name-inside-phrase",
+    "line_type": "full-line-comment",
+    "text": "Lino Fontana",
+    "expected_entity": "NAME",
+    "expected_route": "G3",
+    "expected_outcome": "anonymize",
+    "why": "only the name portion of a longer phrase is personal",
+    "truth_entity": "NAME",
+    "truth_names": [
+      {
+        "text": "Lino Fontana",
+        "line": 111,
+        "column": 36,
+        "start": 35,
+        "end": 47,
+        "in_watchlist": false
+      }
+    ],
+    "direct_person_cue": false
+  },
+  {
+    "id": "C00097",
+    "line": 112,
+    "category": "apostrophe",
+    "line_type": "full-line-comment",
+    "text": "Ilaria D'Amico",
+    "expected_entity": "NAME",
+    "expected_route": "G2",
+    "expected_outcome": "anonymize",
+    "why": "straight or curly apostrophe surname",
+    "truth_entity": "NAME",
+    "truth_names": [
+      {
+        "text": "Ilaria D'Amico",
+        "line": 112,
+        "column": 15,
+        "start": 14,
+        "end": 28,
+        "in_watchlist": true
+      }
+    ],
+    "direct_person_cue": false
+  },
+  {
+    "id": "C00098",
+    "line": 113,
+    "category": "apostrophe",
+    "line_type": "display-literal",
+    "text": "Giorgio D''Onofrio",
+    "expected_entity": "NAME",
+    "expected_route": "G2",
+    "expected_outcome": "anonymize",
+    "why": "straight or curly apostrophe surname",
+    "truth_entity": "NAME",
+    "truth_names": [
+      {
+        "text": "Giorgio D''Onofrio",
+        "line": 113,
+        "column": 18,
+        "start": 17,
+        "end": 35,
+        "in_watchlist": true
+      }
+    ],
+    "direct_person_cue": false
+  },
+  {
+    "id": "C00099",
+    "line": 114,
+    "category": "apostrophe",
+    "line_type": "move-literal",
+    "text": "Paola D''Angelo",
+    "expected_entity": "NAME",
+    "expected_route": "G2",
+    "expected_outcome": "anonymize",
+    "why": "straight or curly apostrophe surname",
+    "truth_entity": "NAME",
+    "truth_names": [
+      {
+        "text": "Paola D''Angelo",
+        "line": 114,
+        "column": 15,
+        "start": 14,
+        "end": 29,
+        "in_watchlist": true
+      }
+    ],
+    "direct_person_cue": false
+  },
+  {
+    "id": "C00100",
+    "line": 115,
+    "category": "apostrophe",
+    "line_type": "inline-comment",
+    "text": "Ilaria D’Amico",
+    "expected_entity": "NAME",
+    "expected_route": "G2",
+    "expected_outcome": "anonymize",
+    "why": "straight or curly apostrophe surname",
+    "truth_entity": "NAME",
+    "truth_names": [
+      {
+        "text": "Ilaria D’Amico",
+        "line": 115,
+        "column": 18,
+        "start": 17,
+        "end": 31,
+        "in_watchlist": true
+      }
+    ],
+    "direct_person_cue": false
+  },
+  {
+    "id": "C00101",
+    "line": 116,
+    "category": "apostrophe",
+    "line_type": "full-line-comment",
+    "text": "Giorgio D’Onofrio",
+    "expected_entity": "NAME",
+    "expected_route": "G2",
+    "expected_outcome": "anonymize",
+    "why": "straight or curly apostrophe surname",
+    "truth_entity": "NAME",
+    "truth_names": [
+      {
+        "text": "Giorgio D’Onofrio",
+        "line": 116,
+        "column": 15,
+        "start": 14,
+        "end": 31,
+        "in_watchlist": true
+      }
+    ],
+    "direct_person_cue": false
+  },
+  {
+    "id": "C00102",
+    "line": 117,
+    "category": "apostrophe",
+    "line_type": "display-literal",
+    "text": "Paola D’Angelo",
+    "expected_entity": "NAME",
+    "expected_route": "G2",
+    "expected_outcome": "anonymize",
+    "why": "straight or curly apostrophe surname",
+    "truth_entity": "NAME",
+    "truth_names": [
+      {
+        "text": "Paola D’Angelo",
+        "line": 117,
+        "column": 18,
+        "start": 17,
+        "end": 31,
+        "in_watchlist": true
+      }
+    ],
+    "direct_person_cue": false
+  },
+  {
+    "id": "C00103",
+    "line": 118,
+    "category": "apostrophe",
+    "line_type": "move-literal",
+    "text": "Ilaria D''Amico",
+    "expected_entity": "NAME",
+    "expected_route": "G2",
+    "expected_outcome": "anonymize",
+    "why": "COBOL doubled apostrophe inside a quoted literal",
+    "truth_entity": "NAME",
+    "truth_names": [
+      {
+        "text": "Ilaria D''Amico",
+        "line": 118,
+        "column": 15,
+        "start": 14,
+        "end": 29,
+        "in_watchlist": true
+      }
+    ],
+    "direct_person_cue": false
+  },
+  {
+    "id": "C00104",
+    "line": 119,
+    "category": "apostrophe",
+    "line_type": "move-literal",
+    "text": "Giorgio D''Onofrio",
+    "expected_entity": "NAME",
+    "expected_route": "G2",
+    "expected_outcome": "anonymize",
+    "why": "COBOL doubled apostrophe inside a quoted literal",
+    "truth_entity": "NAME",
+    "truth_names": [
+      {
+        "text": "Giorgio D''Onofrio",
+        "line": 119,
+        "column": 15,
+        "start": 14,
+        "end": 32,
+        "in_watchlist": true
+      }
+    ],
+    "direct_person_cue": false
+  },
+  {
+    "id": "C00105",
+    "line": 120,
+    "category": "particles",
+    "line_type": "full-line-comment",
+    "text": "Claudio De Luca",
+    "expected_entity": "NAME",
+    "expected_route": "G2",
+    "expected_outcome": "anonymize",
+    "why": "Italian surname particle",
+    "truth_entity": "NAME",
+    "truth_names": [
+      {
+        "text": "Claudio De Luca",
+        "line": 120,
+        "column": 15,
+        "start": 14,
+        "end": 29,
+        "in_watchlist": true
+      }
+    ],
+    "direct_person_cue": false
+  },
+  {
+    "id": "C00106",
+    "line": 121,
+    "category": "particles",
+    "line_type": "display-literal",
+    "text": "Elena Della Valle",
+    "expected_entity": "NAME",
+    "expected_route": "G2",
+    "expected_outcome": "anonymize",
+    "why": "Italian surname particle",
+    "truth_entity": "NAME",
+    "truth_names": [
+      {
+        "text": "Elena Della Valle",
+        "line": 121,
+        "column": 18,
+        "start": 17,
+        "end": 34,
+        "in_watchlist": true
+      }
+    ],
+    "direct_person_cue": false
+  },
+  {
+    "id": "C00107",
+    "line": 122,
+    "category": "particles",
+    "line_type": "move-literal",
+    "text": "Fabio Di Marco",
+    "expected_entity": "NAME",
+    "expected_route": "G2",
+    "expected_outcome": "anonymize",
+    "why": "Italian surname particle",
+    "truth_entity": "NAME",
+    "truth_names": [
+      {
+        "text": "Fabio Di Marco",
+        "line": 122,
+        "column": 15,
+        "start": 14,
+        "end": 28,
+        "in_watchlist": true
+      }
+    ],
+    "direct_person_cue": false
+  },
+  {
+    "id": "C00108",
+    "line": 123,
+    "category": "particles",
+    "line_type": "inline-comment",
+    "text": "Carla De Luca",
+    "expected_entity": "NAME",
+    "expected_route": "G3",
+    "expected_outcome": "anonymize",
+    "why": "Italian surname particle",
+    "truth_entity": "NAME",
+    "truth_names": [
+      {
+        "text": "Carla De Luca",
+        "line": 123,
+        "column": 18,
+        "start": 17,
+        "end": 30,
+        "in_watchlist": false
+      }
+    ],
+    "direct_person_cue": false
+  },
+  {
+    "id": "C00109",
+    "line": 124,
+    "category": "particles",
+    "line_type": "full-line-comment",
+    "text": "Stefano Della Valle",
+    "expected_entity": "NAME",
+    "expected_route": "G3",
+    "expected_outcome": "anonymize",
+    "why": "Italian surname particle",
+    "truth_entity": "NAME",
+    "truth_names": [
+      {
+        "text": "Stefano Della Valle",
+        "line": 124,
+        "column": 15,
+        "start": 14,
+        "end": 33,
+        "in_watchlist": false
+      }
+    ],
+    "direct_person_cue": false
+  },
+  {
+    "id": "C00110",
+    "line": 125,
+    "category": "particles",
+    "line_type": "display-literal",
+    "text": "Marta Di Marco",
+    "expected_entity": "NAME",
+    "expected_route": "G3",
+    "expected_outcome": "anonymize",
+    "why": "Italian surname particle",
+    "truth_entity": "NAME",
+    "truth_names": [
+      {
+        "text": "Marta Di Marco",
+        "line": 125,
+        "column": 18,
+        "start": 17,
+        "end": 31,
+        "in_watchlist": false
+      }
+    ],
+    "direct_person_cue": false
+  },
+  {
+    "id": "C00111",
+    "line": 126,
+    "category": "particles",
+    "line_type": "move-literal",
+    "text": "Renato De Luca",
+    "expected_entity": "NAME",
+    "expected_route": "G3",
+    "expected_outcome": "anonymize",
+    "why": "Italian surname particle",
+    "truth_entity": "NAME",
+    "truth_names": [
+      {
+        "text": "Renato De Luca",
+        "line": 126,
+        "column": 15,
+        "start": 14,
+        "end": 28,
+        "in_watchlist": false
+      }
+    ],
+    "direct_person_cue": false
+  },
+  {
+    "id": "C00112",
+    "line": 127,
+    "category": "particles",
+    "line_type": "inline-comment",
+    "text": "Silvia Di Marco",
+    "expected_entity": "NAME",
+    "expected_route": "G3",
+    "expected_outcome": "anonymize",
+    "why": "Italian surname particle",
+    "truth_entity": "NAME",
+    "truth_names": [
+      {
+        "text": "Silvia Di Marco",
+        "line": 127,
+        "column": 18,
+        "start": 17,
+        "end": 32,
+        "in_watchlist": false
+      }
+    ],
+    "direct_person_cue": false
+  },
+  {
+    "id": "C00113",
+    "line": 128,
+    "category": "accents",
+    "line_type": "full-line-comment",
+    "text": "Nicolò O'Rourke",
+    "expected_entity": "NAME",
+    "expected_route": "G2",
+    "expected_outcome": "anonymize",
+    "why": "accented given name or O' surname",
+    "truth_entity": "NAME",
+    "truth_names": [
+      {
+        "text": "Nicolò O'Rourke",
+        "line": 128,
+        "column": 15,
+        "start": 14,
+        "end": 29,
+        "in_watchlist": true
+      }
+    ],
+    "direct_person_cue": false
+  },
+  {
+    "id": "C00114",
+    "line": 129,
+    "category": "accents",
+    "line_type": "display-literal",
+    "text": "Noè O''Neil",
+    "expected_entity": "NAME",
+    "expected_route": "G2",
+    "expected_outcome": "anonymize",
+    "why": "accented given name or O' surname",
+    "truth_entity": "NAME",
+    "truth_names": [
+      {
+        "text": "Noè O''Neil",
+        "line": 129,
+        "column": 18,
+        "start": 17,
+        "end": 28,
+        "in_watchlist": true
+      }
+    ],
+    "direct_person_cue": false
+  },
+  {
+    "id": "C00115",
+    "line": 130,
+    "category": "accents",
+    "line_type": "move-literal",
+    "text": "Lidia O''Connor",
+    "expected_entity": "NAME",
+    "expected_route": "G2",
+    "expected_outcome": "anonymize",
+    "why": "accented given name or O' surname",
+    "truth_entity": "NAME",
+    "truth_names": [
+      {
+        "text": "Lidia O''Connor",
+        "line": 130,
+        "column": 15,
+        "start": 14,
+        "end": 29,
+        "in_watchlist": true
+      }
+    ],
+    "direct_person_cue": false
+  },
+  {
+    "id": "C00116",
+    "line": 131,
+    "category": "accents",
+    "line_type": "inline-comment",
+    "text": "Nicolò O’Rourke",
+    "expected_entity": "NAME",
+    "expected_route": "G2",
+    "expected_outcome": "anonymize",
+    "why": "accented given name or O' surname",
+    "truth_entity": "NAME",
+    "truth_names": [
+      {
+        "text": "Nicolò O’Rourke",
+        "line": 131,
+        "column": 18,
+        "start": 17,
+        "end": 32,
+        "in_watchlist": true
+      }
+    ],
+    "direct_person_cue": false
+  },
+  {
+    "id": "C00117",
+    "line": 132,
+    "category": "accents",
+    "line_type": "full-line-comment",
+    "text": "Noè O’Neil",
+    "expected_entity": "NAME",
+    "expected_route": "G2",
+    "expected_outcome": "anonymize",
+    "why": "accented given name or O' surname",
+    "truth_entity": "NAME",
+    "truth_names": [
+      {
+        "text": "Noè O’Neil",
+        "line": 132,
+        "column": 15,
+        "start": 14,
+        "end": 24,
+        "in_watchlist": true
+      }
+    ],
+    "direct_person_cue": false
+  },
+  {
+    "id": "C00118",
+    "line": 133,
+    "category": "accents",
+    "line_type": "display-literal",
+    "text": "Lidia O’Connor",
+    "expected_entity": "NAME",
+    "expected_route": "G2",
+    "expected_outcome": "anonymize",
+    "why": "accented given name or O' surname",
+    "truth_entity": "NAME",
+    "truth_names": [
+      {
+        "text": "Lidia O’Connor",
+        "line": 133,
+        "column": 18,
+        "start": 17,
+        "end": 31,
+        "in_watchlist": true
+      }
+    ],
+    "direct_person_cue": false
+  },
+  {
+    "id": "C00119",
+    "line": 134,
+    "category": "accents",
+    "line_type": "move-literal",
+    "text": "Nicolò O''Rourke",
+    "expected_entity": "NAME",
+    "expected_route": "G2",
+    "expected_outcome": "anonymize",
+    "why": "accented given name or O' surname",
+    "truth_entity": "NAME",
+    "truth_names": [
+      {
+        "text": "Nicolò O''Rourke",
+        "line": 134,
+        "column": 15,
+        "start": 14,
+        "end": 30,
+        "in_watchlist": true
+      }
+    ],
+    "direct_person_cue": false
+  },
+  {
+    "id": "C00120",
+    "line": 135,
+    "category": "accents",
+    "line_type": "inline-comment",
+    "text": "Noè O''Neil",
+    "expected_entity": "NAME",
+    "expected_route": "G2",
+    "expected_outcome": "anonymize",
+    "why": "accented given name or O' surname",
+    "truth_entity": "NAME",
+    "truth_names": [
+      {
+        "text": "Noè O''Neil",
+        "line": 135,
+        "column": 18,
+        "start": 17,
+        "end": 28,
+        "in_watchlist": true
+      }
+    ],
+    "direct_person_cue": false
+  },
+  {
+    "id": "C00121",
+    "line": 136,
+    "category": "lowercase",
+    "line_type": "full-line-comment",
+    "text": "alessia cavallo",
+    "expected_entity": "NAME",
+    "expected_route": "G2",
+    "expected_outcome": "anonymize",
+    "why": "lowercase Italian full name",
+    "truth_entity": "NAME",
+    "truth_names": [
+      {
+        "text": "alessia cavallo",
+        "line": 136,
+        "column": 15,
+        "start": 14,
+        "end": 29,
+        "in_watchlist": true
+      }
+    ],
+    "direct_person_cue": false
+  },
+  {
+    "id": "C00122",
+    "line": 137,
+    "category": "lowercase",
+    "line_type": "display-literal",
+    "text": "adalberto morelli",
+    "expected_entity": "NAME",
+    "expected_route": "G3",
+    "expected_outcome": "anonymize",
+    "why": "lowercase Italian full name",
+    "truth_entity": "NAME",
+    "truth_names": [
+      {
+        "text": "adalberto morelli",
+        "line": 137,
+        "column": 18,
+        "start": 17,
+        "end": 34,
+        "in_watchlist": false
+      }
+    ],
+    "direct_person_cue": false
+  },
+  {
+    "id": "C00123",
+    "line": 138,
+    "category": "lowercase",
+    "line_type": "move-literal",
+    "text": "dario fasano",
+    "expected_entity": "NAME",
+    "expected_route": "G2",
+    "expected_outcome": "anonymize",
+    "why": "lowercase Italian full name",
+    "truth_entity": "NAME",
+    "truth_names": [
+      {
+        "text": "dario fasano",
+        "line": 138,
+        "column": 15,
+        "start": 14,
+        "end": 26,
+        "in_watchlist": true
+      }
+    ],
+    "direct_person_cue": false
+  },
+  {
+    "id": "C00124",
+    "line": 139,
+    "category": "lowercase",
+    "line_type": "inline-comment",
+    "text": "fausta moroni",
+    "expected_entity": "NAME",
+    "expected_route": "G3",
+    "expected_outcome": "anonymize",
+    "why": "lowercase Italian full name",
+    "truth_entity": "NAME",
+    "truth_names": [
+      {
+        "text": "fausta moroni",
+        "line": 139,
+        "column": 18,
+        "start": 17,
+        "end": 30,
+        "in_watchlist": false
+      }
+    ],
+    "direct_person_cue": false
+  },
+  {
+    "id": "C00125",
+    "line": 140,
+    "category": "lowercase",
+    "line_type": "full-line-comment",
+    "text": "raffaele paolini",
+    "expected_entity": "NAME",
+    "expected_route": "G2",
+    "expected_outcome": "anonymize",
+    "why": "lowercase Italian full name",
+    "truth_entity": "NAME",
+    "truth_names": [
+      {
+        "text": "raffaele paolini",
+        "line": 140,
+        "column": 15,
+        "start": 14,
+        "end": 30,
+        "in_watchlist": true
+      }
+    ],
+    "direct_person_cue": false
+  },
+  {
+    "id": "C00126",
+    "line": 141,
+    "category": "lowercase",
+    "line_type": "display-literal",
+    "text": "ernesto zanini",
+    "expected_entity": "NAME",
+    "expected_route": "G3",
+    "expected_outcome": "anonymize",
+    "why": "lowercase Italian full name",
+    "truth_entity": "NAME",
+    "truth_names": [
+      {
+        "text": "ernesto zanini",
+        "line": 141,
+        "column": 18,
+        "start": 17,
+        "end": 31,
+        "in_watchlist": false
+      }
+    ],
+    "direct_person_cue": false
+  },
+  {
+    "id": "C00127",
+    "line": 142,
+    "category": "lowercase",
+    "line_type": "move-literal",
+    "text": "concetta ambrosini",
+    "expected_entity": "NAME",
+    "expected_route": "G2",
+    "expected_outcome": "anonymize",
+    "why": "lowercase Italian full name",
+    "truth_entity": "NAME",
+    "truth_names": [
+      {
+        "text": "concetta ambrosini",
+        "line": 142,
+        "column": 15,
+        "start": 14,
+        "end": 32,
+        "in_watchlist": true
+      }
+    ],
+    "direct_person_cue": false
+  },
+  {
+    "id": "C00128",
+    "line": 143,
+    "category": "lowercase",
+    "line_type": "inline-comment",
+    "text": "matteo cipollini",
+    "expected_entity": "NAME",
+    "expected_route": "G3",
+    "expected_outcome": "anonymize",
+    "why": "lowercase Italian full name",
+    "truth_entity": "NAME",
+    "truth_names": [
+      {
+        "text": "matteo cipollini",
+        "line": 143,
+        "column": 18,
+        "start": 17,
+        "end": 33,
+        "in_watchlist": false
+      }
+    ],
+    "direct_person_cue": false
+  },
+  {
+    "id": "C00129",
+    "line": 144,
+    "category": "spaced-letters",
+    "line_type": "full-line-comment",
+    "text": "R O S S I",
+    "expected_entity": "NAME",
+    "expected_route": "G2",
+    "expected_outcome": "anonymize",
+    "why": "spaced-letter spelling of a roster surname",
+    "truth_entity": "NAME",
+    "truth_names": [
+      {
+        "text": "R O S S I",
+        "line": 144,
+        "column": 16,
+        "start": 15,
+        "end": 24,
+        "in_watchlist": true
+      }
+    ],
+    "direct_person_cue": false
+  },
+  {
+    "id": "C00130",
+    "line": 145,
+    "category": "spaced-letters",
+    "line_type": "full-line-comment",
+    "text": "F E R R O",
+    "expected_entity": "NAME",
+    "expected_route": "G2",
+    "expected_outcome": "anonymize",
+    "why": "spaced-letter spelling of a roster surname",
+    "truth_entity": "NAME",
+    "truth_names": [
+      {
+        "text": "F E R R O",
+        "line": 145,
+        "column": 14,
+        "start": 13,
+        "end": 22,
+        "in_watchlist": true
+      }
+    ],
+    "direct_person_cue": false
+  },
+  {
+    "id": "C00131",
+    "line": 146,
+    "category": "spaced-letters",
+    "line_type": "full-line-comment",
+    "text": "N E R I",
+    "expected_entity": "NAME",
+    "expected_route": "G2",
+    "expected_outcome": "anonymize",
+    "why": "spaced-letter spelling of a roster surname",
+    "truth_entity": "NAME",
+    "truth_names": [
+      {
+        "text": "N E R I",
+        "line": 146,
+        "column": 14,
+        "start": 13,
+        "end": 20,
+        "in_watchlist": true
+      }
+    ],
+    "direct_person_cue": false
+  },
+  {
+    "id": "C00132",
+    "line": 147,
+    "category": "spaced-letters",
+    "line_type": "full-line-comment",
+    "text": "S A L A",
+    "expected_entity": "NAME",
+    "expected_route": "G2",
+    "expected_outcome": "anonymize",
+    "why": "spaced-letter spelling of a roster surname",
+    "truth_entity": "NAME",
+    "truth_names": [
+      {
+        "text": "S A L A",
+        "line": 147,
+        "column": 16,
+        "start": 15,
+        "end": 22,
+        "in_watchlist": true
+      }
+    ],
+    "direct_person_cue": false
+  },
+  {
+    "id": "C00133",
+    "line": 148,
+    "category": "spaced-letters",
+    "line_type": "full-line-comment",
+    "text": "R O S S I",
+    "expected_entity": "NAME",
+    "expected_route": "G2",
+    "expected_outcome": "anonymize",
+    "why": "spaced-letter spelling of a roster surname",
+    "truth_entity": "NAME",
+    "truth_names": [
+      {
+        "text": "R O S S I",
+        "line": 148,
+        "column": 16,
+        "start": 15,
+        "end": 24,
+        "in_watchlist": true
+      }
+    ],
+    "direct_person_cue": false
+  },
+  {
+    "id": "C00134",
+    "line": 149,
+    "category": "spaced-letters",
+    "line_type": "full-line-comment",
+    "text": "F E R R O",
+    "expected_entity": "NAME",
+    "expected_route": "G2",
+    "expected_outcome": "anonymize",
+    "why": "spaced-letter spelling of a roster surname",
+    "truth_entity": "NAME",
+    "truth_names": [
+      {
+        "text": "F E R R O",
+        "line": 149,
+        "column": 14,
+        "start": 13,
+        "end": 22,
+        "in_watchlist": true
+      }
+    ],
+    "direct_person_cue": false
+  },
+  {
+    "id": "C00135",
+    "line": 150,
+    "category": "spaced-letters",
+    "line_type": "full-line-comment",
+    "text": "N E R I",
+    "expected_entity": "NAME",
+    "expected_route": "G2",
+    "expected_outcome": "anonymize",
+    "why": "spaced-letter spelling of a roster surname",
+    "truth_entity": "NAME",
+    "truth_names": [
+      {
+        "text": "N E R I",
+        "line": 150,
+        "column": 14,
+        "start": 13,
+        "end": 20,
+        "in_watchlist": true
+      }
+    ],
+    "direct_person_cue": false
+  },
+  {
+    "id": "C00136",
+    "line": 151,
+    "category": "spaced-letters",
+    "line_type": "full-line-comment",
+    "text": "S A L A",
+    "expected_entity": "NAME",
+    "expected_route": "G2",
+    "expected_outcome": "anonymize",
+    "why": "spaced-letter spelling of a roster surname",
+    "truth_entity": "NAME",
+    "truth_names": [
+      {
+        "text": "S A L A",
+        "line": 151,
+        "column": 16,
+        "start": 15,
+        "end": 22,
+        "in_watchlist": true
+      }
+    ],
+    "direct_person_cue": false
+  },
+  {
+    "id": "C00137",
+    "line": 152,
+    "category": "reversed-order",
+    "line_type": "full-line-comment",
+    "text": "Mori Lara",
+    "expected_entity": "NAME",
+    "expected_route": "G2",
+    "expected_outcome": "anonymize",
+    "why": "surname-first presentation of a roster person",
+    "truth_entity": "NAME",
+    "truth_names": [
+      {
+        "text": "Mori Lara",
+        "line": 152,
+        "column": 15,
+        "start": 14,
+        "end": 23,
+        "in_watchlist": true
+      }
+    ],
+    "direct_person_cue": false
+  },
+  {
+    "id": "C00138",
+    "line": 153,
+    "category": "reversed-order",
+    "line_type": "display-literal",
+    "text": "Buttitta Mariano",
+    "expected_entity": "NAME",
+    "expected_route": "G2",
+    "expected_outcome": "anonymize",
+    "why": "surname-first presentation of a roster person",
+    "truth_entity": "NAME",
+    "truth_names": [
+      {
+        "text": "Buttitta Mariano",
+        "line": 153,
+        "column": 18,
+        "start": 17,
+        "end": 33,
+        "in_watchlist": true
+      }
+    ],
+    "direct_person_cue": false
+  },
+  {
+    "id": "C00139",
+    "line": 154,
+    "category": "reversed-order",
+    "line_type": "move-literal",
+    "text": "Rava Giacomo",
+    "expected_entity": "NAME",
+    "expected_route": "G2",
+    "expected_outcome": "anonymize",
+    "why": "surname-first presentation of a roster person",
+    "truth_entity": "NAME",
+    "truth_names": [
+      {
+        "text": "Rava Giacomo",
+        "line": 154,
+        "column": 15,
+        "start": 14,
+        "end": 26,
+        "in_watchlist": true
+      }
+    ],
+    "direct_person_cue": false
+  },
+  {
+    "id": "C00140",
+    "line": 155,
+    "category": "reversed-order",
+    "line_type": "inline-comment",
+    "text": "Gatti Emma",
+    "expected_entity": "NAME",
+    "expected_route": "G2",
+    "expected_outcome": "anonymize",
+    "why": "surname-first presentation of a roster person",
+    "truth_entity": "NAME",
+    "truth_names": [
+      {
+        "text": "Gatti Emma",
+        "line": 155,
+        "column": 18,
+        "start": 17,
+        "end": 27,
+        "in_watchlist": true
+      }
+    ],
+    "direct_person_cue": false
+  },
+  {
+    "id": "C00141",
+    "line": 156,
+    "category": "reversed-order",
+    "line_type": "full-line-comment",
+    "text": "Corbetta Cristiana",
+    "expected_entity": "NAME",
+    "expected_route": "G2",
+    "expected_outcome": "anonymize",
+    "why": "surname-first presentation of a roster person",
+    "truth_entity": "NAME",
+    "truth_names": [
+      {
+        "text": "Corbetta Cristiana",
+        "line": 156,
+        "column": 15,
+        "start": 14,
+        "end": 32,
+        "in_watchlist": true
+      }
+    ],
+    "direct_person_cue": false
+  },
+  {
+    "id": "C00142",
+    "line": 157,
+    "category": "reversed-order",
+    "line_type": "display-literal",
+    "text": "Salerno Alida",
+    "expected_entity": "NAME",
+    "expected_route": "G2",
+    "expected_outcome": "anonymize",
+    "why": "surname-first presentation of a roster person",
+    "truth_entity": "NAME",
+    "truth_names": [
+      {
+        "text": "Salerno Alida",
+        "line": 157,
+        "column": 18,
+        "start": 17,
+        "end": 30,
+        "in_watchlist": true
+      }
+    ],
+    "direct_person_cue": false
+  },
+  {
+    "id": "C00143",
+    "line": 158,
+    "category": "reversed-order",
+    "line_type": "move-literal",
+    "text": "D''Amico Ilaria",
+    "expected_entity": "NAME",
+    "expected_route": "G2",
+    "expected_outcome": "anonymize",
+    "why": "surname-first presentation of a roster person",
+    "truth_entity": "NAME",
+    "truth_names": [
+      {
+        "text": "D''Amico Ilaria",
+        "line": 158,
+        "column": 15,
+        "start": 14,
+        "end": 29,
+        "in_watchlist": true
+      }
+    ],
+    "direct_person_cue": false
+  },
+  {
+    "id": "C00144",
+    "line": 159,
+    "category": "reversed-order",
+    "line_type": "inline-comment",
+    "text": "D''Onofrio Giorgio",
+    "expected_entity": "NAME",
+    "expected_route": "G2",
+    "expected_outcome": "anonymize",
+    "why": "surname-first presentation of a roster person",
+    "truth_entity": "NAME",
+    "truth_names": [
+      {
+        "text": "D''Onofrio Giorgio",
+        "line": 159,
+        "column": 18,
+        "start": 17,
+        "end": 35,
+        "in_watchlist": true
+      }
+    ],
+    "direct_person_cue": false
+  },
+  {
+    "id": "C00145",
+    "line": 160,
+    "category": "paired-person",
+    "line_type": "full-line-comment",
+    "text": "Ferro",
+    "expected_entity": "NAME",
+    "expected_route": "G2",
+    "expected_outcome": "anonymize",
+    "why": "same spelling is a person in this pair",
+    "truth_entity": "NAME",
+    "truth_names": [
+      {
+        "text": "Ferro",
+        "line": 160,
+        "column": 18,
+        "start": 17,
+        "end": 22,
+        "in_watchlist": true
+      }
+    ],
+    "direct_person_cue": true,
+    "pair_id": "PAIR-01"
+  },
+  {
+    "id": "C00146",
+    "line": 161,
+    "category": "paired-person",
+    "line_type": "full-line-comment",
+    "text": "Neri",
+    "expected_entity": "NAME",
+    "expected_route": "G2",
+    "expected_outcome": "anonymize",
+    "why": "same spelling is a person in this pair",
+    "truth_entity": "NAME",
+    "truth_names": [
+      {
+        "text": "Neri",
+        "line": 161,
+        "column": 20,
+        "start": 19,
+        "end": 23,
+        "in_watchlist": true
+      }
+    ],
+    "direct_person_cue": true,
+    "pair_id": "PAIR-02"
+  },
+  {
+    "id": "C00147",
+    "line": 162,
+    "category": "paired-person",
+    "line_type": "full-line-comment",
+    "text": "Sala",
+    "expected_entity": "NAME",
+    "expected_route": "G2",
+    "expected_outcome": "anonymize",
+    "why": "same spelling is a person in this pair",
+    "truth_entity": "NAME",
+    "truth_names": [
+      {
+        "text": "Sala",
+        "line": 162,
+        "column": 14,
+        "start": 13,
+        "end": 17,
+        "in_watchlist": true
+      }
+    ],
+    "direct_person_cue": false,
+    "pair_id": "PAIR-03"
+  },
+  {
+    "id": "C00148",
+    "line": 163,
+    "category": "paired-person",
+    "line_type": "full-line-comment",
+    "text": "Rosa",
+    "expected_entity": "NAME",
+    "expected_route": "G2",
+    "expected_outcome": "anonymize",
+    "why": "same spelling is a person in this pair",
+    "truth_entity": "NAME",
+    "truth_names": [
+      {
+        "text": "Rosa",
+        "line": 163,
+        "column": 14,
+        "start": 13,
+        "end": 17,
+        "in_watchlist": true
+      }
+    ],
+    "direct_person_cue": false,
+    "pair_id": "PAIR-04"
+  },
+  {
+    "id": "C00149",
+    "line": 164,
+    "category": "paired-person",
+    "line_type": "full-line-comment",
+    "text": "Costa",
+    "expected_entity": "NAME",
+    "expected_route": "G2",
+    "expected_outcome": "anonymize",
+    "why": "same spelling is a person in this pair",
+    "truth_entity": "NAME",
+    "truth_names": [
+      {
+        "text": "Costa",
+        "line": 164,
+        "column": 18,
+        "start": 17,
+        "end": 22,
+        "in_watchlist": true
+      }
+    ],
+    "direct_person_cue": true,
+    "pair_id": "PAIR-05"
+  },
+  {
+    "id": "C00150",
+    "line": 165,
+    "category": "paired-person",
+    "line_type": "full-line-comment",
+    "text": "Riva",
+    "expected_entity": "NAME",
+    "expected_route": "G2",
+    "expected_outcome": "anonymize",
+    "why": "same spelling is a person in this pair",
+    "truth_entity": "NAME",
+    "truth_names": [
+      {
+        "text": "Riva",
+        "line": 165,
+        "column": 20,
+        "start": 19,
+        "end": 23,
+        "in_watchlist": true
+      }
+    ],
+    "direct_person_cue": true,
+    "pair_id": "PAIR-06"
+  },
+  {
+    "id": "C00151",
+    "line": 166,
+    "category": "paired-person",
+    "line_type": "full-line-comment",
+    "text": "Fiore",
+    "expected_entity": "NAME",
+    "expected_route": "G2",
+    "expected_outcome": "anonymize",
+    "why": "same spelling is a person in this pair",
+    "truth_entity": "NAME",
+    "truth_names": [
+      {
+        "text": "Fiore",
+        "line": 166,
+        "column": 14,
+        "start": 13,
+        "end": 18,
+        "in_watchlist": true
+      }
+    ],
+    "direct_person_cue": false,
+    "pair_id": "PAIR-07"
+  },
+  {
+    "id": "C00152",
+    "line": 167,
+    "category": "paired-person",
+    "line_type": "full-line-comment",
+    "text": "Leone",
+    "expected_entity": "NAME",
+    "expected_route": "G2",
+    "expected_outcome": "anonymize",
+    "why": "same spelling is a person in this pair",
+    "truth_entity": "NAME",
+    "truth_names": [
+      {
+        "text": "Leone",
+        "line": 167,
+        "column": 14,
+        "start": 13,
+        "end": 18,
+        "in_watchlist": true
+      }
+    ],
+    "direct_person_cue": false,
+    "pair_id": "PAIR-08"
+  },
+  {
+    "id": "C00153",
+    "line": 168,
+    "category": "bulk-positive",
+    "line_type": "full-line-comment",
+    "text": "Paola D'Angelo",
+    "expected_entity": "NAME",
+    "expected_route": "G2",
+    "expected_outcome": "anonymize",
+    "why": "seeded random Italian full-name coverage",
+    "truth_entity": "NAME",
+    "truth_names": [
+      {
+        "text": "Paola D'Angelo",
+        "line": 168,
+        "column": 15,
+        "start": 14,
+        "end": 28,
+        "in_watchlist": true
+      }
+    ],
+    "direct_person_cue": false
+  },
+  {
+    "id": "C00154",
+    "line": 169,
+    "category": "bulk-positive",
+    "line_type": "display-literal",
+    "text": "Anastasia Casati",
+    "expected_entity": "NAME",
+    "expected_route": "G3",
+    "expected_outcome": "anonymize",
+    "why": "seeded random Italian full-name coverage",
+    "truth_entity": "NAME",
+    "truth_names": [
+      {
+        "text": "Anastasia Casati",
+        "line": 169,
+        "column": 18,
+        "start": 17,
+        "end": 33,
+        "in_watchlist": false
+      }
+    ],
+    "direct_person_cue": false
+  },
+  {
+    "id": "C00155",
+    "line": 170,
+    "category": "bulk-positive",
+    "line_type": "move-literal",
+    "text": "Elena Della Valle",
+    "expected_entity": "NAME",
+    "expected_route": "G2",
+    "expected_outcome": "anonymize",
+    "why": "seeded random Italian full-name coverage",
+    "truth_entity": "NAME",
+    "truth_names": [
+      {
+        "text": "Elena Della Valle",
+        "line": 170,
+        "column": 15,
+        "start": 14,
+        "end": 31,
+        "in_watchlist": true
+      }
+    ],
+    "direct_person_cue": false
+  },
+  {
+    "id": "C00156",
+    "line": 171,
+    "category": "bulk-positive",
+    "line_type": "inline-comment",
+    "text": "Serafino Fantini",
+    "expected_entity": "NAME",
+    "expected_route": "G3",
+    "expected_outcome": "anonymize",
+    "why": "seeded random Italian full-name coverage",
+    "truth_entity": "NAME",
+    "truth_names": [
+      {
+        "text": "Serafino Fantini",
+        "line": 171,
+        "column": 18,
+        "start": 17,
+        "end": 33,
+        "in_watchlist": false
+      }
+    ],
+    "direct_person_cue": false
+  },
+  {
+    "id": "C00157",
+    "line": 172,
+    "category": "bulk-positive",
+    "line_type": "full-line-comment",
+    "text": "Nicolò O'Rourke",
+    "expected_entity": "NAME",
+    "expected_route": "G2",
+    "expected_outcome": "anonymize",
+    "why": "seeded random Italian full-name coverage",
+    "truth_entity": "NAME",
+    "truth_names": [
+      {
+        "text": "Nicolò O'Rourke",
+        "line": 172,
+        "column": 15,
+        "start": 14,
+        "end": 29,
+        "in_watchlist": true
+      }
+    ],
+    "direct_person_cue": false
+  },
+  {
+    "id": "C00158",
+    "line": 173,
+    "category": "bulk-positive",
+    "line_type": "display-literal",
+    "text": "Corrado Rossetto",
+    "expected_entity": "NAME",
+    "expected_route": "G3",
+    "expected_outcome": "anonymize",
+    "why": "seeded random Italian full-name coverage",
+    "truth_entity": "NAME",
+    "truth_names": [
+      {
+        "text": "Corrado Rossetto",
+        "line": 173,
+        "column": 18,
+        "start": 17,
+        "end": 33,
+        "in_watchlist": false
+      }
+    ],
+    "direct_person_cue": false
+  },
+  {
+    "id": "C00159",
+    "line": 174,
+    "category": "bulk-positive",
+    "line_type": "move-literal",
+    "text": "Lidia O''Connor",
+    "expected_entity": "NAME",
+    "expected_route": "G2",
+    "expected_outcome": "anonymize",
+    "why": "seeded random Italian full-name coverage",
+    "truth_entity": "NAME",
+    "truth_names": [
+      {
+        "text": "Lidia O''Connor",
+        "line": 174,
+        "column": 15,
+        "start": 14,
+        "end": 29,
+        "in_watchlist": true
+      }
+    ],
+    "direct_person_cue": false
+  },
+  {
+    "id": "C00160",
+    "line": 175,
+    "category": "bulk-positive",
+    "line_type": "inline-comment",
+    "text": "Flavia Trevisan",
+    "expected_entity": "NAME",
+    "expected_route": "G3",
+    "expected_outcome": "anonymize",
+    "why": "seeded random Italian full-name coverage",
+    "truth_entity": "NAME",
+    "truth_names": [
+      {
+        "text": "Flavia Trevisan",
+        "line": 175,
+        "column": 18,
+        "start": 17,
+        "end": 32,
+        "in_watchlist": false
+      }
+    ],
+    "direct_person_cue": false
+  },
+  {
+    "id": "C00161",
+    "line": 176,
+    "category": "bulk-positive",
+    "line_type": "full-line-comment",
+    "text": "Edoardo Lanza",
+    "expected_entity": "NAME",
+    "expected_route": "G2",
+    "expected_outcome": "anonymize",
+    "why": "seeded random Italian full-name coverage",
+    "truth_entity": "NAME",
+    "truth_names": [
+      {
+        "text": "Edoardo Lanza",
+        "line": 176,
+        "column": 15,
+        "start": 14,
+        "end": 27,
+        "in_watchlist": true
+      }
+    ],
+    "direct_person_cue": false
+  },
+  {
+    "id": "C00162",
+    "line": 177,
+    "category": "bulk-positive",
+    "line_type": "display-literal",
+    "text": "Alessia Marini",
+    "expected_entity": "NAME",
+    "expected_route": "G3",
+    "expected_outcome": "anonymize",
+    "why": "seeded random Italian full-name coverage",
+    "truth_entity": "NAME",
+    "truth_names": [
+      {
+        "text": "Alessia Marini",
+        "line": 177,
+        "column": 18,
+        "start": 17,
+        "end": 31,
+        "in_watchlist": false
+      }
+    ],
+    "direct_person_cue": false
+  },
+  {
+    "id": "C00163",
+    "line": 178,
+    "category": "bulk-positive",
+    "line_type": "move-literal",
+    "text": "Lidiana Paolini",
+    "expected_entity": "NAME",
+    "expected_route": "G2",
+    "expected_outcome": "anonymize",
+    "why": "seeded random Italian full-name coverage",
+    "truth_entity": "NAME",
+    "truth_names": [
+      {
+        "text": "Lidiana Paolini",
+        "line": 178,
+        "column": 15,
+        "start": 14,
+        "end": 29,
+        "in_watchlist": true
+      }
+    ],
+    "direct_person_cue": false
+  },
+  {
+    "id": "C00164",
+    "line": 179,
+    "category": "bulk-positive",
+    "line_type": "inline-comment",
+    "text": "Sara Silvestri",
+    "expected_entity": "NAME",
+    "expected_route": "G3",
+    "expected_outcome": "anonymize",
+    "why": "seeded random Italian full-name coverage",
+    "truth_entity": "NAME",
+    "truth_names": [
+      {
+        "text": "Sara Silvestri",
+        "line": 179,
+        "column": 18,
+        "start": 17,
+        "end": 31,
+        "in_watchlist": false
+      }
+    ],
+    "direct_person_cue": false
+  },
+  {
+    "id": "C00165",
+    "line": 180,
+    "category": "paired-ordinary",
+    "line_type": "full-line-comment",
+    "text": "CANCELLO IN FERRO",
+    "expected_entity": "NONE",
+    "expected_route": "none",
+    "expected_outcome": "leave",
+    "why": "same spelling is ordinary in this pair",
+    "truth_entity": "NONE",
+    "truth_names": [],
+    "direct_person_cue": false,
+    "pair_id": "PAIR-01"
+  },
+  {
+    "id": "C00166",
+    "line": 181,
+    "category": "paired-ordinary",
+    "line_type": "display-literal",
+    "text": "FONDI NERI",
+    "expected_entity": "NONE",
+    "expected_route": "none",
+    "expected_outcome": "leave",
+    "why": "same spelling is ordinary in this pair",
+    "truth_entity": "NONE",
+    "truth_names": [],
+    "direct_person_cue": false,
+    "pair_id": "PAIR-02"
+  },
+  {
+    "id": "C00167",
+    "line": 182,
+    "category": "paired-ordinary",
+    "line_type": "move-literal",
+    "text": "SALA SERVER",
+    "expected_entity": "NONE",
+    "expected_route": "none",
+    "expected_outcome": "leave",
+    "why": "same spelling is ordinary in this pair",
+    "truth_entity": "NONE",
+    "truth_names": [],
+    "direct_person_cue": false,
+    "pair_id": "PAIR-03"
+  },
+  {
+    "id": "C00168",
+    "line": 183,
+    "category": "paired-ordinary",
+    "line_type": "plain-code",
+    "text": "ROSA DEI VENTI",
+    "expected_entity": "NONE",
+    "expected_route": "none",
+    "expected_outcome": "leave",
+    "why": "same spelling is ordinary in this pair",
+    "truth_entity": "NONE",
+    "truth_names": [],
+    "direct_person_cue": false,
+    "pair_id": "PAIR-04"
+  },
+  {
+    "id": "C00169",
+    "line": 184,
+    "category": "paired-ordinary",
+    "line_type": "full-line-comment",
+    "text": "COSTA DEL FILE",
+    "expected_entity": "NONE",
+    "expected_route": "none",
+    "expected_outcome": "leave",
+    "why": "same spelling is ordinary in this pair",
+    "truth_entity": "NONE",
+    "truth_names": [],
+    "direct_person_cue": false,
+    "pair_id": "PAIR-05"
+  },
+  {
+    "id": "C00170",
+    "line": 185,
+    "category": "paired-ordinary",
+    "line_type": "display-literal",
+    "text": "RIVA DEL FIUME",
+    "expected_entity": "NONE",
+    "expected_route": "none",
+    "expected_outcome": "leave",
+    "why": "same spelling is ordinary in this pair",
+    "truth_entity": "NONE",
+    "truth_names": [],
+    "direct_person_cue": false,
+    "pair_id": "PAIR-06"
+  },
+  {
+    "id": "C00171",
+    "line": 186,
+    "category": "paired-ordinary",
+    "line_type": "move-literal",
+    "text": "FIORE DEL MODULO",
+    "expected_entity": "NONE",
+    "expected_route": "none",
+    "expected_outcome": "leave",
+    "why": "same spelling is ordinary in this pair",
+    "truth_entity": "NONE",
+    "truth_names": [],
+    "direct_person_cue": false,
+    "pair_id": "PAIR-07"
+  },
+  {
+    "id": "C00172",
+    "line": 187,
+    "category": "paired-ordinary",
+    "line_type": "plain-code",
+    "text": "LEONE ARALDICO",
+    "expected_entity": "NONE",
+    "expected_route": "none",
+    "expected_outcome": "leave",
+    "why": "same spelling is ordinary in this pair",
+    "truth_entity": "NONE",
+    "truth_names": [],
+    "direct_person_cue": false,
+    "pair_id": "PAIR-08"
+  },
+  {
+    "id": "C00173",
+    "line": 188,
+    "category": "title-case-ordinary",
+    "line_type": "full-line-comment",
+    "text": "Registro Presenze",
+    "expected_entity": "NONE",
+    "expected_route": "none",
+    "expected_outcome": "leave",
+    "why": "Title Case ordinary phrase",
+    "truth_entity": "NONE",
+    "truth_names": [],
+    "direct_person_cue": false
+  },
+  {
+    "id": "C00174",
+    "line": 189,
+    "category": "date-or-month",
+    "line_type": "display-literal",
+    "text": "MESE DI MAGGIO",
+    "expected_entity": "NONE",
+    "expected_route": "none",
+    "expected_outcome": "leave",
+    "why": "month after MESE DI",
+    "truth_entity": "NONE",
+    "truth_names": [],
+    "direct_person_cue": false
+  },
+  {
+    "id": "C00175",
+    "line": 190,
+    "category": "payroll-admin",
+    "line_type": "move-literal",
+    "text": "IMPONIBILE FISCALE",
+    "expected_entity": "NONE",
+    "expected_route": "none",
+    "expected_outcome": "leave",
+    "why": "payroll or administration phrase",
+    "truth_entity": "NONE",
+    "truth_names": [],
+    "direct_person_cue": false
+  },
+  {
+    "id": "C00176",
+    "line": 191,
+    "category": "place",
+    "line_type": "plain-code",
+    "text": "REGIONE NAPOLI",
+    "expected_entity": "NONE",
+    "expected_route": "none",
+    "expected_outcome": "leave",
+    "why": "region or city after REGIONE",
+    "truth_entity": "NONE",
+    "truth_names": [],
+    "direct_person_cue": false
+  },
+  {
+    "id": "C00177",
+    "line": 192,
+    "category": "title-case-ordinary",
+    "line_type": "full-line-comment",
+    "text": "Profilo Utente",
+    "expected_entity": "NONE",
+    "expected_route": "none",
+    "expected_outcome": "leave",
+    "why": "Title Case ordinary phrase",
+    "truth_entity": "NONE",
+    "truth_names": [],
+    "direct_person_cue": false
+  },
+  {
+    "id": "C00178",
+    "line": 193,
+    "category": "organization",
+    "line_type": "display-literal",
+    "text": "CONSORZIO DI ROMA",
+    "expected_entity": "NONE",
+    "expected_route": "none",
+    "expected_outcome": "leave",
+    "why": "organization named after a place",
+    "truth_entity": "NONE",
+    "truth_names": [],
+    "direct_person_cue": false
+  },
+  {
+    "id": "C00179",
+    "line": 194,
+    "category": "watchlist-word",
+    "line_type": "move-literal",
+    "text": "RIVA DEL FIUME",
+    "expected_entity": "NONE",
+    "expected_route": "none",
+    "expected_outcome": "leave",
+    "why": "watchlist spelling used as an ordinary word",
+    "truth_entity": "NONE",
+    "truth_names": [],
+    "direct_person_cue": false
+  },
+  {
+    "id": "C00180",
+    "line": 195,
+    "category": "watchlist-word",
+    "line_type": "plain-code",
+    "text": "CAMPO NOTE",
+    "expected_entity": "NONE",
+    "expected_route": "none",
+    "expected_outcome": "leave",
+    "why": "watchlist spelling used as an ordinary word",
+    "truth_entity": "NONE",
+    "truth_names": [],
+    "direct_person_cue": false
+  },
+  {
+    "id": "C00181",
+    "line": 196,
+    "category": "payroll-admin",
+    "line_type": "full-line-comment",
+    "text": "CONTROLLO ASSENZE",
+    "expected_entity": "NONE",
+    "expected_route": "none",
+    "expected_outcome": "leave",
+    "why": "payroll or administration phrase",
+    "truth_entity": "NONE",
+    "truth_names": [],
+    "direct_person_cue": false
+  },
+  {
+    "id": "C00182",
+    "line": 197,
+    "category": "payroll-admin",
+    "line_type": "display-literal",
+    "text": "REGISTRO FERIE",
+    "expected_entity": "NONE",
+    "expected_route": "none",
+    "expected_outcome": "leave",
+    "why": "payroll or administration phrase",
+    "truth_entity": "NONE",
+    "truth_names": [],
+    "direct_person_cue": false
+  },
+  {
+    "id": "C00183",
+    "line": 198,
+    "category": "place",
+    "line_type": "move-literal",
+    "text": "REGIONE TOSCANA",
+    "expected_entity": "NONE",
+    "expected_route": "none",
+    "expected_outcome": "leave",
+    "why": "region or city after REGIONE",
+    "truth_entity": "NONE",
+    "truth_names": [],
+    "direct_person_cue": false
+  },
+  {
+    "id": "C00184",
+    "line": 199,
+    "category": "function-words",
+    "line_type": "plain-code",
+    "text": "TRA CUI",
+    "expected_entity": "NONE",
+    "expected_route": "none",
+    "expected_outcome": "leave",
+    "why": "function-word phrase",
+    "truth_entity": "NONE",
+    "truth_names": [],
+    "direct_person_cue": false
+  },
+  {
+    "id": "C00185",
+    "line": 200,
+    "category": "payroll-admin",
+    "line_type": "full-line-comment",
+    "text": "PROSPETTO CONTRIBUTI",
+    "expected_entity": "NONE",
+    "expected_route": "none",
+    "expected_outcome": "leave",
+    "why": "payroll or administration phrase",
+    "truth_entity": "NONE",
+    "truth_names": [],
+    "direct_person_cue": false
+  },
+  {
+    "id": "C00186",
+    "line": 201,
+    "category": "title-case-ordinary",
+    "line_type": "display-literal",
+    "text": "Esito Elaborazione",
+    "expected_entity": "NONE",
+    "expected_route": "none",
+    "expected_outcome": "leave",
+    "why": "Title Case ordinary phrase",
+    "truth_entity": "NONE",
+    "truth_names": [],
+    "direct_person_cue": false
+  },
+  {
+    "id": "C00187",
+    "line": 202,
+    "category": "watchlist-word",
+    "line_type": "move-literal",
+    "text": "COSTA DEL FILE",
+    "expected_entity": "NONE",
+    "expected_route": "none",
+    "expected_outcome": "leave",
+    "why": "watchlist spelling used as an ordinary word",
+    "truth_entity": "NONE",
+    "truth_names": [],
+    "direct_person_cue": false
+  },
+  {
+    "id": "C00188",
+    "line": 203,
+    "category": "place",
+    "line_type": "plain-code",
+    "text": "REGIONE ROMA",
+    "expected_entity": "NONE",
+    "expected_route": "none",
+    "expected_outcome": "leave",
+    "why": "region or city after REGIONE",
+    "truth_entity": "NONE",
+    "truth_names": [],
+    "direct_person_cue": false
+  },
+  {
+    "id": "C00189",
+    "line": 204,
+    "category": "payroll-admin",
+    "line_type": "full-line-comment",
+    "text": "RIEPILOGO COMPETENZE",
+    "expected_entity": "NONE",
+    "expected_route": "none",
+    "expected_outcome": "leave",
+    "why": "payroll or administration phrase",
+    "truth_entity": "NONE",
+    "truth_names": [],
+    "direct_person_cue": false
+  },
+  {
+    "id": "C00190",
+    "line": 205,
+    "category": "function-words",
+    "line_type": "display-literal",
+    "text": "CON CUI",
+    "expected_entity": "NONE",
+    "expected_route": "none",
+    "expected_outcome": "leave",
+    "why": "function-word phrase",
+    "truth_entity": "NONE",
+    "truth_names": [],
+    "direct_person_cue": false
+  },
+  {
+    "id": "C00191",
+    "line": 206,
+    "category": "payroll-admin",
+    "line_type": "move-literal",
+    "text": "RITENUTE PREVIDENZIALI",
+    "expected_entity": "NONE",
+    "expected_route": "none",
+    "expected_outcome": "leave",
+    "why": "payroll or administration phrase",
+    "truth_entity": "NONE",
+    "truth_names": [],
+    "direct_person_cue": false
+  },
+  {
+    "id": "C00192",
+    "line": 207,
+    "category": "title-case-ordinary",
+    "line_type": "plain-code",
+    "text": "Riepilogo Paghe",
+    "expected_entity": "NONE",
+    "expected_route": "none",
+    "expected_outcome": "leave",
+    "why": "Title Case ordinary phrase",
+    "truth_entity": "NONE",
+    "truth_names": [],
+    "direct_person_cue": false
+  },
+  {
+    "id": "C00193",
+    "line": 208,
+    "category": "organization",
+    "line_type": "full-line-comment",
+    "text": "ISTITUTO DI BARI",
+    "expected_entity": "NONE",
+    "expected_route": "none",
+    "expected_outcome": "leave",
+    "why": "organization named after a place",
+    "truth_entity": "NONE",
+    "truth_names": [],
+    "direct_person_cue": false
+  },
+  {
+    "id": "C00194",
+    "line": 209,
+    "category": "code-or-abbreviation",
+    "line_type": "display-literal",
+    "text": "ABX-17",
+    "expected_entity": "NONE",
+    "expected_route": "none",
+    "expected_outcome": "leave",
+    "why": "code, abbreviation, Roman numeral, or slash form",
+    "truth_entity": "NONE",
+    "truth_names": [],
+    "direct_person_cue": false
+  },
+  {
+    "id": "C00195",
+    "line": 210,
+    "category": "date-or-month",
+    "line_type": "move-literal",
+    "text": "DATA GIUGNO 2026",
+    "expected_entity": "NONE",
+    "expected_route": "none",
+    "expected_outcome": "leave",
+    "why": "month in a date",
+    "truth_entity": "NONE",
+    "truth_names": [],
+    "direct_person_cue": false
+  },
+  {
+    "id": "C00196",
+    "line": 211,
+    "category": "code-or-abbreviation",
+    "line_type": "plain-code",
+    "text": "C O G N O M E",
+    "expected_entity": "NONE",
+    "expected_route": "none",
+    "expected_outcome": "leave",
+    "why": "code, abbreviation, Roman numeral, or slash form",
+    "truth_entity": "NONE",
+    "truth_names": [],
+    "direct_person_cue": false
+  },
+  {
+    "id": "C00197",
+    "line": 212,
+    "category": "payroll-admin",
+    "line_type": "full-line-comment",
+    "text": "LIQUIDAZIONE MENSILE",
+    "expected_entity": "NONE",
+    "expected_route": "none",
+    "expected_outcome": "leave",
+    "why": "payroll or administration phrase",
+    "truth_entity": "NONE",
+    "truth_names": [],
+    "direct_person_cue": false
+  },
+  {
+    "id": "C00198",
+    "line": 213,
+    "category": "date-or-month",
+    "line_type": "display-literal",
+    "text": "DATA LUGLIO 2026",
+    "expected_entity": "NONE",
+    "expected_route": "none",
+    "expected_outcome": "leave",
+    "why": "month in a date",
+    "truth_entity": "NONE",
+    "truth_names": [],
+    "direct_person_cue": false
+  },
+  {
+    "id": "C00199",
+    "line": 214,
+    "category": "cue-at-end",
+    "line_type": "move-literal",
+    "text": "CLIENTE: TOTALE CONTI",
+    "expected_entity": "NONE",
+    "expected_route": "none",
+    "expected_outcome": "leave",
+    "why": "person cue at one end and unrelated non-name at the other",
+    "truth_entity": "NONE",
+    "truth_names": [],
+    "direct_person_cue": false
+  },
+  {
+    "id": "C00200",
+    "line": 215,
+    "category": "title-case-ordinary",
+    "line_type": "plain-code",
+    "text": "Controllo Mensile",
+    "expected_entity": "NONE",
+    "expected_route": "none",
+    "expected_outcome": "leave",
+    "why": "Title Case ordinary phrase",
+    "truth_entity": "NONE",
+    "truth_names": [],
+    "direct_person_cue": false
+  },
+  {
+    "id": "C00201",
+    "line": 216,
+    "category": "watchlist-word",
+    "line_type": "full-line-comment",
+    "text": "TESTA RECORD",
+    "expected_entity": "NONE",
+    "expected_route": "none",
+    "expected_outcome": "leave",
+    "why": "watchlist spelling used as an ordinary word",
+    "truth_entity": "NONE",
+    "truth_names": [],
+    "direct_person_cue": false
+  },
+  {
+    "id": "C00202",
+    "line": 217,
+    "category": "watchlist-word",
+    "line_type": "display-literal",
+    "text": "ROSA DEI VENTI",
+    "expected_entity": "NONE",
+    "expected_route": "none",
+    "expected_outcome": "leave",
+    "why": "watchlist spelling used as an ordinary word",
+    "truth_entity": "NONE",
+    "truth_names": [],
+    "direct_person_cue": false
+  },
+  {
+    "id": "C00203",
+    "line": 218,
+    "category": "organization",
+    "line_type": "move-literal",
+    "text": "ENTE PIEMONTE",
+    "expected_entity": "NONE",
+    "expected_route": "none",
+    "expected_outcome": "leave",
+    "why": "organization named after a place",
+    "truth_entity": "NONE",
+    "truth_names": [],
+    "direct_person_cue": false
+  },
+  {
+    "id": "C00204",
+    "line": 219,
+    "category": "code-or-abbreviation",
+    "line_type": "plain-code",
+    "text": "LIV-IV",
+    "expected_entity": "NONE",
+    "expected_route": "none",
+    "expected_outcome": "leave",
+    "why": "code, abbreviation, Roman numeral, or slash form",
+    "truth_entity": "NONE",
+    "truth_names": [],
+    "direct_person_cue": false
+  },
+  {
+    "id": "C00205",
+    "line": 220,
+    "category": "title-case-ordinary",
+    "line_type": "full-line-comment",
+    "text": "Chiusura Contabile",
+    "expected_entity": "NONE",
+    "expected_route": "none",
+    "expected_outcome": "leave",
+    "why": "Title Case ordinary phrase",
+    "truth_entity": "NONE",
+    "truth_names": [],
+    "direct_person_cue": false
+  },
+  {
+    "id": "C00206",
+    "line": 221,
+    "category": "date-or-month",
+    "line_type": "display-literal",
+    "text": "DATA MAGGIO 2026",
+    "expected_entity": "NONE",
+    "expected_route": "none",
+    "expected_outcome": "leave",
+    "why": "month in a date",
+    "truth_entity": "NONE",
+    "truth_names": [],
+    "direct_person_cue": false
+  },
+  {
+    "id": "C00207",
+    "line": 222,
+    "category": "payroll-admin",
+    "line_type": "move-literal",
+    "text": "ARCHIVIO MATRICOLA",
+    "expected_entity": "NONE",
+    "expected_route": "none",
+    "expected_outcome": "leave",
+    "why": "payroll or administration phrase",
+    "truth_entity": "NONE",
+    "truth_names": [],
+    "direct_person_cue": false
+  },
+  {
+    "id": "C00208",
+    "line": 223,
+    "category": "payroll-admin",
+    "line_type": "plain-code",
+    "text": "CONGUAGLIO CEDOLINO",
+    "expected_entity": "NONE",
+    "expected_route": "none",
+    "expected_outcome": "leave",
+    "why": "payroll or administration phrase",
+    "truth_entity": "NONE",
+    "truth_names": [],
+    "direct_person_cue": false
+  },
+  {
+    "id": "C00209",
+    "line": 224,
+    "category": "code-or-abbreviation",
+    "line_type": "full-line-comment",
+    "text": "BATCH Q7",
+    "expected_entity": "NONE",
+    "expected_route": "none",
+    "expected_outcome": "leave",
+    "why": "code, abbreviation, Roman numeral, or slash form",
+    "truth_entity": "NONE",
+    "truth_names": [],
+    "direct_person_cue": false
+  },
+  {
+    "id": "C00210",
+    "line": 225,
+    "category": "place",
+    "line_type": "display-literal",
+    "text": "REGIONE CALABRIA",
+    "expected_entity": "NONE",
+    "expected_route": "none",
+    "expected_outcome": "leave",
+    "why": "region or city after REGIONE",
+    "truth_entity": "NONE",
+    "truth_names": [],
+    "direct_person_cue": false
+  },
+  {
+    "id": "C00211",
+    "line": 226,
+    "category": "date-or-month",
+    "line_type": "move-literal",
+    "text": "MESE DI AGOSTO",
+    "expected_entity": "NONE",
+    "expected_route": "none",
+    "expected_outcome": "leave",
+    "why": "month after MESE DI",
+    "truth_entity": "NONE",
+    "truth_names": [],
+    "direct_person_cue": false
+  },
+  {
+    "id": "C00212",
+    "line": 227,
+    "category": "payroll-admin",
+    "line_type": "plain-code",
+    "text": "CALCOLO TRATTENUTE",
+    "expected_entity": "NONE",
+    "expected_route": "none",
+    "expected_outcome": "leave",
+    "why": "payroll or administration phrase",
+    "truth_entity": "NONE",
+    "truth_names": [],
+    "direct_person_cue": false
+  },
+  {
+    "id": "C00213",
+    "line": 228,
+    "category": "place",
+    "line_type": "full-line-comment",
+    "text": "COMUNE DI LOMBARDIA",
+    "expected_entity": "NONE",
+    "expected_route": "none",
+    "expected_outcome": "leave",
+    "why": "region or city after COMUNE DI",
+    "truth_entity": "NONE",
+    "truth_names": [],
+    "direct_person_cue": false
+  },
+  {
+    "id": "C00214",
+    "line": 229,
+    "category": "function-words",
+    "line_type": "display-literal",
+    "text": "DI CUI",
+    "expected_entity": "NONE",
+    "expected_route": "none",
+    "expected_outcome": "leave",
+    "why": "function-word phrase",
+    "truth_entity": "NONE",
+    "truth_names": [],
+    "direct_person_cue": false
+  },
+  {
+    "id": "C00215",
+    "line": 230,
+    "category": "place",
+    "line_type": "move-literal",
+    "text": "COMUNE DI CALABRIA",
+    "expected_entity": "NONE",
+    "expected_route": "none",
+    "expected_outcome": "leave",
+    "why": "region or city after COMUNE DI",
+    "truth_entity": "NONE",
+    "truth_names": [],
+    "direct_person_cue": false
+  },
+  {
+    "id": "C00216",
+    "line": 231,
+    "category": "organization",
+    "line_type": "plain-code",
+    "text": "AGENZIA LOMBARDIA",
+    "expected_entity": "NONE",
+    "expected_route": "none",
+    "expected_outcome": "leave",
+    "why": "organization named after a place",
+    "truth_entity": "NONE",
+    "truth_names": [],
+    "direct_person_cue": false
+  },
+  {
+    "id": "C00217",
+    "line": 232,
+    "category": "place",
+    "line_type": "full-line-comment",
+    "text": "REGIONE MILANO",
+    "expected_entity": "NONE",
+    "expected_route": "none",
+    "expected_outcome": "leave",
+    "why": "region or city after REGIONE",
+    "truth_entity": "NONE",
+    "truth_names": [],
+    "direct_person_cue": false
+  },
+  {
+    "id": "C00218",
+    "line": 233,
+    "category": "date-or-month",
+    "line_type": "display-literal",
+    "text": "MESE DI MARZO",
+    "expected_entity": "NONE",
+    "expected_route": "none",
+    "expected_outcome": "leave",
+    "why": "month after MESE DI",
+    "truth_entity": "NONE",
+    "truth_names": [],
+    "direct_person_cue": false
+  },
+  {
+    "id": "C00219",
+    "line": 234,
+    "category": "organization",
+    "line_type": "move-literal",
+    "text": "BANCA DI MILANO",
+    "expected_entity": "NONE",
+    "expected_route": "none",
+    "expected_outcome": "leave",
+    "why": "organization named after a place",
+    "truth_entity": "NONE",
+    "truth_names": [],
+    "direct_person_cue": false
+  },
+  {
+    "id": "C00220",
+    "line": 235,
+    "category": "title-case-ordinary",
+    "line_type": "plain-code",
+    "text": "Archivio Storico",
+    "expected_entity": "NONE",
+    "expected_route": "none",
+    "expected_outcome": "leave",
+    "why": "Title Case ordinary phrase",
+    "truth_entity": "NONE",
+    "truth_names": [],
+    "direct_person_cue": false
+  },
+  {
+    "id": "C00221",
+    "line": 236,
+    "category": "code-or-abbreviation",
+    "line_type": "full-line-comment",
+    "text": "CFG-R2",
+    "expected_entity": "NONE",
+    "expected_route": "none",
+    "expected_outcome": "leave",
+    "why": "code, abbreviation, Roman numeral, or slash form",
+    "truth_entity": "NONE",
+    "truth_names": [],
+    "direct_person_cue": false
+  },
+  {
+    "id": "C00222",
+    "line": 237,
+    "category": "place",
+    "line_type": "display-literal",
+    "text": "REGIONE PIEMONTE",
+    "expected_entity": "NONE",
+    "expected_route": "none",
+    "expected_outcome": "leave",
+    "why": "region or city after REGIONE",
+    "truth_entity": "NONE",
+    "truth_names": [],
+    "direct_person_cue": false
+  },
+  {
+    "id": "C00223",
+    "line": 238,
+    "category": "organization",
+    "line_type": "move-literal",
+    "text": "CASSA TOSCANA",
+    "expected_entity": "NONE",
+    "expected_route": "none",
+    "expected_outcome": "leave",
+    "why": "organization named after a place",
+    "truth_entity": "NONE",
+    "truth_names": [],
+    "direct_person_cue": false
+  },
+  {
+    "id": "C00224",
+    "line": 239,
+    "category": "watchlist-word",
+    "line_type": "plain-code",
+    "text": "FIORE DEL MODULO",
+    "expected_entity": "NONE",
+    "expected_route": "none",
+    "expected_outcome": "leave",
+    "why": "watchlist spelling used as an ordinary word",
+    "truth_entity": "NONE",
+    "truth_names": [],
+    "direct_person_cue": false
+  },
+  {
+    "id": "C00225",
+    "line": 240,
+    "category": "function-words",
+    "line_type": "full-line-comment",
+    "text": "PER CUI",
+    "expected_entity": "NONE",
+    "expected_route": "none",
+    "expected_outcome": "leave",
+    "why": "function-word phrase",
+    "truth_entity": "NONE",
+    "truth_names": [],
+    "direct_person_cue": false
+  },
+  {
+    "id": "C00226",
+    "line": 241,
+    "category": "payroll-admin",
+    "line_type": "display-literal",
+    "text": "ASSEGNI STRAORDINARI",
+    "expected_entity": "NONE",
+    "expected_route": "none",
+    "expected_outcome": "leave",
+    "why": "payroll or administration phrase",
+    "truth_entity": "NONE",
+    "truth_names": [],
+    "direct_person_cue": false
+  },
+  {
+    "id": "C00227",
+    "line": 242,
+    "category": "code-or-abbreviation",
+    "line_type": "move-literal",
+    "text": "ID/CORE",
+    "expected_entity": "NONE",
+    "expected_route": "none",
+    "expected_outcome": "leave",
+    "why": "code, abbreviation, Roman numeral, or slash form",
+    "truth_entity": "NONE",
+    "truth_names": [],
+    "direct_person_cue": false
+  },
+  {
+    "id": "C00228",
+    "line": 243,
+    "category": "date-or-month",
+    "line_type": "plain-code",
+    "text": "MESE DI APRILE",
+    "expected_entity": "NONE",
+    "expected_route": "none",
+    "expected_outcome": "leave",
+    "why": "month after MESE DI",
+    "truth_entity": "NONE",
+    "truth_names": [],
+    "direct_person_cue": false
+  },
+  {
+    "id": "C00229",
+    "line": 244,
+    "category": "code-or-abbreviation",
+    "line_type": "full-line-comment",
+    "text": "qvMix9",
+    "expected_entity": "NONE",
+    "expected_route": "none",
+    "expected_outcome": "leave",
+    "why": "code, abbreviation, Roman numeral, or slash form",
+    "truth_entity": "NONE",
+    "truth_names": [],
+    "direct_person_cue": false
+  },
+  {
+    "id": "C00230",
+    "line": 245,
+    "category": "function-words",
+    "line_type": "display-literal",
+    "text": "A CUI",
+    "expected_entity": "NONE",
+    "expected_route": "none",
+    "expected_outcome": "leave",
+    "why": "function-word phrase",
+    "truth_entity": "NONE",
+    "truth_names": [],
+    "direct_person_cue": false
+  },
+  {
+    "id": "C00231",
+    "line": 246,
+    "category": "title-case-ordinary",
+    "line_type": "move-literal",
+    "text": "Valore Residuo",
+    "expected_entity": "NONE",
+    "expected_route": "none",
+    "expected_outcome": "leave",
+    "why": "Title Case ordinary phrase",
+    "truth_entity": "NONE",
+    "truth_names": [],
+    "direct_person_cue": false
+  },
+  {
+    "id": "C00232",
+    "line": 247,
+    "category": "function-words",
+    "line_type": "plain-code",
+    "text": "SU CUI",
+    "expected_entity": "NONE",
+    "expected_route": "none",
+    "expected_outcome": "leave",
+    "why": "function-word phrase",
+    "truth_entity": "NONE",
+    "truth_names": [],
+    "direct_person_cue": false
+  },
+  {
+    "id": "C00233",
+    "line": 248,
+    "category": "cue-at-end",
+    "line_type": "full-line-comment",
+    "text": "REFERENTE: SALDO RESIDUO",
+    "expected_entity": "NONE",
+    "expected_route": "none",
+    "expected_outcome": "leave",
+    "why": "person cue at one end and unrelated non-name at the other",
+    "truth_entity": "NONE",
+    "truth_names": [],
+    "direct_person_cue": false
+  },
+  {
+    "id": "C00234",
+    "line": 249,
+    "category": "watchlist-word",
+    "line_type": "display-literal",
+    "text": "TOTALE CONTI CORRENTI",
+    "expected_entity": "NONE",
+    "expected_route": "none",
+    "expected_outcome": "leave",
+    "why": "watchlist spelling used as an ordinary word",
+    "truth_entity": "NONE",
+    "truth_names": [],
+    "direct_person_cue": false
+  },
+  {
+    "id": "C00235",
+    "line": 250,
+    "category": "place",
+    "line_type": "move-literal",
+    "text": "COMUNE DI PIEMONTE",
+    "expected_entity": "NONE",
+    "expected_route": "none",
+    "expected_outcome": "leave",
+    "why": "region or city after COMUNE DI",
+    "truth_entity": "NONE",
+    "truth_names": [],
+    "direct_person_cue": false
+  },
+  {
+    "id": "C00236",
+    "line": 251,
+    "category": "watchlist-word",
+    "line_type": "plain-code",
+    "text": "PIANO CONTABILE",
+    "expected_entity": "NONE",
+    "expected_route": "none",
+    "expected_outcome": "leave",
+    "why": "watchlist spelling used as an ordinary word",
+    "truth_entity": "NONE",
+    "truth_names": [],
+    "direct_person_cue": false
+  },
+  {
+    "id": "C00237",
+    "line": 252,
+    "category": "title-case-ordinary",
+    "line_type": "full-line-comment",
+    "text": "Gestione Scadenze",
+    "expected_entity": "NONE",
+    "expected_route": "none",
+    "expected_outcome": "leave",
+    "why": "Title Case ordinary phrase",
+    "truth_entity": "NONE",
+    "truth_names": [],
+    "direct_person_cue": false
+  },
+  {
+    "id": "C00238",
+    "line": 253,
+    "category": "function-words",
+    "line_type": "display-literal",
+    "text": "IN CUI",
+    "expected_entity": "NONE",
+    "expected_route": "none",
+    "expected_outcome": "leave",
+    "why": "function-word phrase",
+    "truth_entity": "NONE",
+    "truth_names": [],
+    "direct_person_cue": false
+  },
+  {
+    "id": "C00239",
+    "line": 254,
+    "category": "watchlist-word",
+    "line_type": "move-literal",
+    "text": "FERRO BATTUTO",
+    "expected_entity": "NONE",
+    "expected_route": "none",
+    "expected_outcome": "leave",
+    "why": "watchlist spelling used as an ordinary word",
+    "truth_entity": "NONE",
+    "truth_names": [],
+    "direct_person_cue": false
+  },
+  {
+    "id": "C00240",
+    "line": 255,
+    "category": "place",
+    "line_type": "plain-code",
+    "text": "REGIONE LOMBARDIA",
+    "expected_entity": "NONE",
+    "expected_route": "none",
+    "expected_outcome": "leave",
+    "why": "region or city after REGIONE",
+    "truth_entity": "NONE",
+    "truth_names": [],
+    "direct_person_cue": false
+  },
+  {
+    "id": "C00241",
+    "line": 256,
+    "category": "date-or-month",
+    "line_type": "full-line-comment",
+    "text": "MESE DI LUGLIO",
+    "expected_entity": "NONE",
+    "expected_route": "none",
+    "expected_outcome": "leave",
+    "why": "month after MESE DI",
+    "truth_entity": "NONE",
+    "truth_names": [],
+    "direct_person_cue": false
+  },
+  {
+    "id": "C00242",
+    "line": 257,
+    "category": "code-or-abbreviation",
+    "line_type": "display-literal",
+    "text": "FLAG ZETA",
+    "expected_entity": "NONE",
+    "expected_route": "none",
+    "expected_outcome": "leave",
+    "why": "code, abbreviation, Roman numeral, or slash form",
+    "truth_entity": "NONE",
+    "truth_names": [],
+    "direct_person_cue": false
+  },
+  {
+    "id": "C00243",
+    "line": 258,
+    "category": "date-or-month",
+    "line_type": "move-literal",
+    "text": "DATA AGOSTO 2026",
+    "expected_entity": "NONE",
+    "expected_route": "none",
+    "expected_outcome": "leave",
+    "why": "month in a date",
+    "truth_entity": "NONE",
+    "truth_names": [],
+    "direct_person_cue": false
+  },
+  {
+    "id": "C00244",
+    "line": 259,
+    "category": "code-or-abbreviation",
+    "line_type": "plain-code",
+    "text": "SEQ-XX",
+    "expected_entity": "NONE",
+    "expected_route": "none",
+    "expected_outcome": "leave",
+    "why": "code, abbreviation, Roman numeral, or slash form",
+    "truth_entity": "NONE",
+    "truth_names": [],
+    "direct_person_cue": false
+  },
+  {
+    "id": "C00245",
+    "line": 260,
+    "category": "payroll-admin",
+    "line_type": "full-line-comment",
+    "text": "GESTIONE TRASFERTE",
+    "expected_entity": "NONE",
+    "expected_route": "none",
+    "expected_outcome": "leave",
+    "why": "payroll or administration phrase",
+    "truth_entity": "NONE",
+    "truth_names": [],
+    "direct_person_cue": false
+  },
+  {
+    "id": "C00246",
+    "line": 261,
+    "category": "organization",
+    "line_type": "display-literal",
+    "text": "FONDAZIONE CALABRIA",
+    "expected_entity": "NONE",
+    "expected_route": "none",
+    "expected_outcome": "leave",
+    "why": "organization named after a place",
+    "truth_entity": "NONE",
+    "truth_names": [],
+    "direct_person_cue": false
+  },
+  {
+    "id": "C00247",
+    "line": 262,
+    "category": "payroll-admin",
+    "line_type": "move-literal",
+    "text": "VARIAZIONE QUALIFICA",
+    "expected_entity": "NONE",
+    "expected_route": "none",
+    "expected_outcome": "leave",
+    "why": "payroll or administration phrase",
+    "truth_entity": "NONE",
+    "truth_names": [],
+    "direct_person_cue": false
+  },
+  {
+    "id": "C00248",
+    "line": 263,
+    "category": "cue-at-end",
+    "line_type": "plain-code",
+    "text": "UTENTE: WS-DUMMY",
+    "expected_entity": "NONE",
+    "expected_route": "none",
+    "expected_outcome": "leave",
+    "why": "person cue at one end and unrelated non-name at the other",
+    "truth_entity": "NONE",
+    "truth_names": [],
+    "direct_person_cue": false
+  },
+  {
+    "id": "C00249",
+    "line": 264,
+    "category": "code-or-abbreviation",
+    "line_type": "full-line-comment",
+    "text": "MOD-3A",
+    "expected_entity": "NONE",
+    "expected_route": "none",
+    "expected_outcome": "leave",
+    "why": "code, abbreviation, Roman numeral, or slash form",
+    "truth_entity": "NONE",
+    "truth_names": [],
+    "direct_person_cue": false
+  },
+  {
+    "id": "C00250",
+    "line": 265,
+    "category": "watchlist-word",
+    "line_type": "display-literal",
+    "text": "SALA SERVER",
+    "expected_entity": "NONE",
+    "expected_route": "none",
+    "expected_outcome": "leave",
+    "why": "watchlist spelling used as an ordinary word",
+    "truth_entity": "NONE",
+    "truth_names": [],
+    "direct_person_cue": false
+  },
+  {
+    "id": "C00251",
+    "line": 266,
+    "category": "place",
+    "line_type": "move-literal",
+    "text": "COMUNE DI ROMA",
+    "expected_entity": "NONE",
+    "expected_route": "none",
+    "expected_outcome": "leave",
+    "why": "region or city after COMUNE DI",
+    "truth_entity": "NONE",
+    "truth_names": [],
+    "direct_person_cue": false
+  },
+  {
+    "id": "C00252",
+    "line": 267,
+    "category": "date-or-month",
+    "line_type": "plain-code",
+    "text": "DATA APRILE 2026",
+    "expected_entity": "NONE",
+    "expected_route": "none",
+    "expected_outcome": "leave",
+    "why": "month in a date",
+    "truth_entity": "NONE",
+    "truth_names": [],
+    "direct_person_cue": false
+  },
+  {
+    "id": "C00253",
+    "line": 268,
+    "category": "payroll-admin",
+    "line_type": "full-line-comment",
+    "text": "ELABORAZIONE TURNI",
+    "expected_entity": "NONE",
+    "expected_route": "none",
+    "expected_outcome": "leave",
+    "why": "payroll or administration phrase",
+    "truth_entity": "NONE",
+    "truth_names": [],
+    "direct_person_cue": false
+  },
+  {
+    "id": "C00254",
+    "line": 269,
+    "category": "date-or-month",
+    "line_type": "display-literal",
+    "text": "MESE DI GIUGNO",
+    "expected_entity": "NONE",
+    "expected_route": "none",
+    "expected_outcome": "leave",
+    "why": "month after MESE DI",
+    "truth_entity": "NONE",
+    "truth_names": [],
+    "direct_person_cue": false
+  },
+  {
+    "id": "C00255",
+    "line": 270,
+    "category": "function-words",
+    "line_type": "move-literal",
+    "text": "DA CUI",
+    "expected_entity": "NONE",
+    "expected_route": "none",
+    "expected_outcome": "leave",
+    "why": "function-word phrase",
+    "truth_entity": "NONE",
+    "truth_names": [],
+    "direct_person_cue": false
+  },
+  {
+    "id": "C00256",
+    "line": 271,
+    "category": "date-or-month",
+    "line_type": "plain-code",
+    "text": "MESE DI FEBBRAIO",
+    "expected_entity": "NONE",
+    "expected_route": "none",
+    "expected_outcome": "leave",
+    "why": "month after MESE DI",
+    "truth_entity": "NONE",
+    "truth_names": [],
+    "direct_person_cue": false
+  },
+  {
+    "id": "C00257",
+    "line": 272,
+    "category": "date-or-month",
+    "line_type": "full-line-comment",
+    "text": "DATA FEBBRAIO 2026",
+    "expected_entity": "NONE",
+    "expected_route": "none",
+    "expected_outcome": "leave",
+    "why": "month in a date",
+    "truth_entity": "NONE",
+    "truth_names": [],
+    "direct_person_cue": false
+  },
+  {
+    "id": "C00258",
+    "line": 273,
+    "category": "place",
+    "line_type": "display-literal",
+    "text": "COMUNE DI NAPOLI",
+    "expected_entity": "NONE",
+    "expected_route": "none",
+    "expected_outcome": "leave",
+    "why": "region or city after COMUNE DI",
+    "truth_entity": "NONE",
+    "truth_names": [],
+    "direct_person_cue": false
+  },
+  {
+    "id": "C00259",
+    "line": 274,
+    "category": "date-or-month",
+    "line_type": "move-literal",
+    "text": "DATA MARZO 2026",
+    "expected_entity": "NONE",
+    "expected_route": "none",
+    "expected_outcome": "leave",
+    "why": "month in a date",
+    "truth_entity": "NONE",
+    "truth_names": [],
+    "direct_person_cue": false
+  },
+  {
+    "id": "C00260",
+    "line": 275,
+    "category": "payroll-admin",
+    "line_type": "plain-code",
+    "text": "TABELLA PAGHE",
+    "expected_entity": "NONE",
+    "expected_route": "none",
+    "expected_outcome": "leave",
+    "why": "payroll or administration phrase",
+    "truth_entity": "NONE",
+    "truth_names": [],
+    "direct_person_cue": false
+  },
+  {
+    "id": "C00261",
+    "line": 276,
+    "category": "code-or-abbreviation",
+    "line_type": "full-line-comment",
+    "text": "RPT/09",
+    "expected_entity": "NONE",
+    "expected_route": "none",
+    "expected_outcome": "leave",
+    "why": "code, abbreviation, Roman numeral, or slash form",
+    "truth_entity": "NONE",
+    "truth_names": [],
+    "direct_person_cue": false
+  },
+  {
+    "id": "C00262",
+    "line": 277,
+    "category": "place",
+    "line_type": "display-literal",
+    "text": "COMUNE DI MILANO",
+    "expected_entity": "NONE",
+    "expected_route": "none",
+    "expected_outcome": "leave",
+    "why": "region or city after COMUNE DI",
+    "truth_entity": "NONE",
+    "truth_names": [],
+    "direct_person_cue": false
+  },
+  {
+    "id": "C00263",
+    "line": 278,
+    "category": "date-or-month",
+    "line_type": "move-literal",
+    "text": "DATA GENNAIO 2026",
+    "expected_entity": "NONE",
+    "expected_route": "none",
+    "expected_outcome": "leave",
+    "why": "month in a date",
+    "truth_entity": "NONE",
+    "truth_names": [],
+    "direct_person_cue": false
+  },
+  {
+    "id": "C00264",
+    "line": 279,
+    "category": "watchlist-word",
+    "line_type": "plain-code",
+    "text": "LEONE ARALDICO",
+    "expected_entity": "NONE",
+    "expected_route": "none",
+    "expected_outcome": "leave",
+    "why": "watchlist spelling used as an ordinary word",
+    "truth_entity": "NONE",
+    "truth_names": [],
+    "direct_person_cue": false
+  },
+  {
+    "id": "C00265",
+    "line": 280,
+    "category": "title-case-ordinary",
+    "line_type": "full-line-comment",
+    "text": "Lista Operativa",
+    "expected_entity": "NONE",
+    "expected_route": "none",
+    "expected_outcome": "leave",
+    "why": "Title Case ordinary phrase",
+    "truth_entity": "NONE",
+    "truth_names": [],
+    "direct_person_cue": false
+  },
+  {
+    "id": "C00266",
+    "line": 281,
+    "category": "code-or-abbreviation",
+    "line_type": "display-literal",
+    "text": "COD-XR",
+    "expected_entity": "NONE",
+    "expected_route": "none",
+    "expected_outcome": "leave",
+    "why": "code, abbreviation, Roman numeral, or slash form",
+    "truth_entity": "NONE",
+    "truth_names": [],
+    "direct_person_cue": false
+  },
+  {
+    "id": "C00267",
+    "line": 282,
+    "category": "date-or-month",
+    "line_type": "move-literal",
+    "text": "MESE DI GENNAIO",
+    "expected_entity": "NONE",
+    "expected_route": "none",
+    "expected_outcome": "leave",
+    "why": "month after MESE DI",
+    "truth_entity": "NONE",
+    "truth_names": [],
+    "direct_person_cue": false
+  },
+  {
+    "id": "C00268",
+    "line": 283,
+    "category": "payroll-admin",
+    "line_type": "plain-code",
+    "text": "CHIUSURA PRESENZE",
+    "expected_entity": "NONE",
+    "expected_route": "none",
+    "expected_outcome": "leave",
+    "why": "payroll or administration phrase",
+    "truth_entity": "NONE",
+    "truth_names": [],
+    "direct_person_cue": false
+  },
+  {
+    "id": "C00269",
+    "line": 284,
+    "category": "title-case-ordinary",
+    "line_type": "full-line-comment",
+    "text": "Piano Annuale",
+    "expected_entity": "NONE",
+    "expected_route": "none",
+    "expected_outcome": "leave",
+    "why": "Title Case ordinary phrase",
+    "truth_entity": "NONE",
+    "truth_names": [],
+    "direct_person_cue": false
+  },
+  {
+    "id": "C00270",
+    "line": 285,
+    "category": "organization",
+    "line_type": "display-literal",
+    "text": "ARCHIVIO NAPOLI",
+    "expected_entity": "NONE",
+    "expected_route": "none",
+    "expected_outcome": "leave",
+    "why": "organization named after a place",
+    "truth_entity": "NONE",
+    "truth_names": [],
+    "direct_person_cue": false
+  },
+  {
+    "id": "C00271",
+    "line": 286,
+    "category": "cue-at-end",
+    "line_type": "move-literal",
+    "text": "OPERATORE: C/C",
+    "expected_entity": "NONE",
+    "expected_route": "none",
+    "expected_outcome": "leave",
+    "why": "person cue at one end and unrelated non-name at the other",
+    "truth_entity": "NONE",
+    "truth_names": [],
+    "direct_person_cue": false
+  },
+  {
+    "id": "C00272",
+    "line": 287,
+    "category": "code-or-abbreviation",
+    "line_type": "plain-code",
+    "text": "C/C",
+    "expected_entity": "NONE",
+    "expected_route": "none",
+    "expected_outcome": "leave",
+    "why": "code, abbreviation, Roman numeral, or slash form",
+    "truth_entity": "NONE",
+    "truth_names": [],
+    "direct_person_cue": false
+  },
+  {
+    "id": "C00273",
+    "line": 288,
+    "category": "place",
+    "line_type": "full-line-comment",
+    "text": "COMUNE DI TOSCANA",
+    "expected_entity": "NONE",
+    "expected_route": "none",
+    "expected_outcome": "leave",
+    "why": "region or city after COMUNE DI",
+    "truth_entity": "NONE",
+    "truth_names": [],
+    "direct_person_cue": false
+  },
+  {
+    "id": "C00274",
+    "line": 289,
+    "category": "place",
+    "line_type": "display-literal",
+    "text": "REGIONE BARI",
+    "expected_entity": "NONE",
+    "expected_route": "none",
+    "expected_outcome": "leave",
+    "why": "region or city after REGIONE",
+    "truth_entity": "NONE",
+    "truth_names": [],
+    "direct_person_cue": false
+  },
+  {
+    "id": "C00275",
+    "line": 290,
+    "category": "watchlist-word",
+    "line_type": "move-literal",
+    "text": "FONDI NERI",
+    "expected_entity": "NONE",
+    "expected_route": "none",
+    "expected_outcome": "leave",
+    "why": "watchlist spelling used as an ordinary word",
+    "truth_entity": "NONE",
+    "truth_names": [],
+    "direct_person_cue": false
+  },
+  {
+    "id": "C00276",
+    "line": 291,
+    "category": "code-or-abbreviation",
+    "line_type": "plain-code",
+    "text": "XZ-ALFA",
+    "expected_entity": "NONE",
+    "expected_route": "none",
+    "expected_outcome": "leave",
+    "why": "code, abbreviation, Roman numeral, or slash form",
+    "truth_entity": "NONE",
+    "truth_names": [],
+    "direct_person_cue": false
+  },
+  {
+    "id": "C00277",
+    "line": 292,
+    "category": "place",
+    "line_type": "full-line-comment",
+    "text": "COMUNE DI BARI",
+    "expected_entity": "NONE",
+    "expected_route": "none",
+    "expected_outcome": "leave",
+    "why": "region or city after COMUNE DI",
+    "truth_entity": "NONE",
+    "truth_names": [],
+    "direct_person_cue": false
+  },
+  {
+    "id": "C00278",
+    "line": 293,
+    "category": "code-or-abbreviation",
+    "line_type": "display-literal",
+    "text": "KAP/DELTA",
+    "expected_entity": "NONE",
+    "expected_route": "none",
+    "expected_outcome": "leave",
+    "why": "code, abbreviation, Roman numeral, or slash form",
+    "truth_entity": "NONE",
+    "truth_names": [],
+    "direct_person_cue": false
+  },
+  {
+    "id": "C00279",
+    "line": 294,
+    "category": "code-or-abbreviation",
+    "line_type": "move-literal",
+    "text": "ACCT-Q",
+    "expected_entity": "NONE",
+    "expected_route": "none",
+    "expected_outcome": "leave",
+    "why": "code, abbreviation, Roman numeral, or slash form",
+    "truth_entity": "NONE",
+    "truth_names": [],
+    "direct_person_cue": false
+  },
+  {
+    "id": "C00280",
+    "line": 295,
+    "category": "title-case-ordinary",
+    "line_type": "plain-code",
+    "text": "Nota Tecnica",
+    "expected_entity": "NONE",
+    "expected_route": "none",
+    "expected_outcome": "leave",
+    "why": "Title Case ordinary phrase",
+    "truth_entity": "NONE",
+    "truth_names": [],
+    "direct_person_cue": false
+  },
+  {
+    "id": "C00281",
+    "line": 296,
+    "category": "identifier-paragraph",
+    "line_type": "plain-code",
+    "text": "FERRO-ELABORA",
+    "expected_entity": "NAME",
+    "expected_route": "G4",
+    "expected_outcome": "review_required",
+    "why": "possible name is inside a code-sensitive program identifier",
+    "truth_entity": "NAME",
+    "truth_names": [
+      {
+        "text": "FERRO",
+        "line": 296,
+        "column": 9,
+        "start": 8,
+        "end": 13,
+        "in_watchlist": true,
+        "truth_name": "FERRO-ELABORA"
+      }
+    ],
+    "direct_person_cue": false
+  },
+  {
+    "id": "C00282",
+    "line": 297,
+    "category": "identifier-paragraph",
+    "line_type": "plain-code",
+    "text": "NERI-ELABORA",
+    "expected_entity": "NAME",
+    "expected_route": "G4",
+    "expected_outcome": "review_required",
+    "why": "possible name is inside a code-sensitive program identifier",
+    "truth_entity": "NAME",
+    "truth_names": [
+      {
+        "text": "NERI",
+        "line": 297,
+        "column": 9,
+        "start": 8,
+        "end": 12,
+        "in_watchlist": true,
+        "truth_name": "NERI-ELABORA"
+      }
+    ],
+    "direct_person_cue": false
+  },
+  {
+    "id": "C00283",
+    "line": 298,
+    "category": "identifier-paragraph",
+    "line_type": "plain-code",
+    "text": "SALA-ELABORA",
+    "expected_entity": "NAME",
+    "expected_route": "G4",
+    "expected_outcome": "review_required",
+    "why": "possible name is inside a code-sensitive program identifier",
+    "truth_entity": "NAME",
+    "truth_names": [
+      {
+        "text": "SALA",
+        "line": 298,
+        "column": 9,
+        "start": 8,
+        "end": 12,
+        "in_watchlist": true,
+        "truth_name": "SALA-ELABORA"
+      }
+    ],
+    "direct_person_cue": false
+  },
+  {
+    "id": "C00284",
+    "line": 299,
+    "category": "identifier-paragraph",
+    "line_type": "plain-code",
+    "text": "ROSA-ELABORA",
+    "expected_entity": "NAME",
+    "expected_route": "G4",
+    "expected_outcome": "review_required",
+    "why": "possible name is inside a code-sensitive program identifier",
+    "truth_entity": "NAME",
+    "truth_names": [
+      {
+        "text": "ROSA",
+        "line": 299,
+        "column": 9,
+        "start": 8,
+        "end": 12,
+        "in_watchlist": true,
+        "truth_name": "ROSA-ELABORA"
+      }
+    ],
+    "direct_person_cue": false
+  },
+  {
+    "id": "C00285",
+    "line": 300,
+    "category": "identifier-paragraph",
+    "line_type": "plain-code",
+    "text": "COSTA-ELABORA",
+    "expected_entity": "NAME",
+    "expected_route": "G4",
+    "expected_outcome": "review_required",
+    "why": "possible name is inside a code-sensitive program identifier",
+    "truth_entity": "NAME",
+    "truth_names": [
+      {
+        "text": "COSTA",
+        "line": 300,
+        "column": 9,
+        "start": 8,
+        "end": 13,
+        "in_watchlist": true,
+        "truth_name": "COSTA-ELABORA"
+      }
+    ],
+    "direct_person_cue": false
+  },
+  {
+    "id": "C00286",
+    "line": 301,
+    "category": "identifier-paragraph",
+    "line_type": "plain-code",
+    "text": "RIVA-ELABORA",
+    "expected_entity": "NAME",
+    "expected_route": "G4",
+    "expected_outcome": "review_required",
+    "why": "possible name is inside a code-sensitive program identifier",
+    "truth_entity": "NAME",
+    "truth_names": [
+      {
+        "text": "RIVA",
+        "line": 301,
+        "column": 9,
+        "start": 8,
+        "end": 12,
+        "in_watchlist": true,
+        "truth_name": "RIVA-ELABORA"
+      }
+    ],
+    "direct_person_cue": false
+  },
+  {
+    "id": "C00287",
+    "line": 302,
+    "category": "identifier-paragraph",
+    "line_type": "plain-code",
+    "text": "FIORE-ELABORA",
+    "expected_entity": "NAME",
+    "expected_route": "G4",
+    "expected_outcome": "review_required",
+    "why": "possible name is inside a code-sensitive program identifier",
+    "truth_entity": "NAME",
+    "truth_names": [
+      {
+        "text": "FIORE",
+        "line": 302,
+        "column": 9,
+        "start": 8,
+        "end": 13,
+        "in_watchlist": true,
+        "truth_name": "FIORE-ELABORA"
+      }
+    ],
+    "direct_person_cue": false
+  },
+  {
+    "id": "C00288",
+    "line": 303,
+    "category": "identifier-paragraph",
+    "line_type": "plain-code",
+    "text": "LEONE-ELABORA",
+    "expected_entity": "NAME",
+    "expected_route": "G4",
+    "expected_outcome": "review_required",
+    "why": "possible name is inside a code-sensitive program identifier",
+    "truth_entity": "NAME",
+    "truth_names": [
+      {
+        "text": "LEONE",
+        "line": 303,
+        "column": 9,
+        "start": 8,
+        "end": 13,
+        "in_watchlist": true,
+        "truth_name": "LEONE-ELABORA"
+      }
+    ],
+    "direct_person_cue": false
+  },
+  {
+    "id": "C00289",
+    "line": 304,
+    "category": "identifier-paragraph",
+    "line_type": "plain-code",
+    "text": "APRILE-ELABORA",
+    "expected_entity": "NAME",
+    "expected_route": "G4",
+    "expected_outcome": "review_required",
+    "why": "possible name is inside a code-sensitive program identifier",
+    "truth_entity": "NAME",
+    "truth_names": [
+      {
+        "text": "APRILE",
+        "line": 304,
+        "column": 9,
+        "start": 8,
+        "end": 14,
+        "in_watchlist": false,
+        "truth_name": "APRILE-ELABORA"
+      }
+    ],
+    "direct_person_cue": false
+  },
+  {
+    "id": "C00290",
+    "line": 305,
+    "category": "identifier-paragraph",
+    "line_type": "plain-code",
+    "text": "MILANO-ELABORA",
+    "expected_entity": "NAME",
+    "expected_route": "G4",
+    "expected_outcome": "review_required",
+    "why": "possible name is inside a code-sensitive program identifier",
+    "truth_entity": "NAME",
+    "truth_names": [
+      {
+        "text": "MILANO",
+        "line": 305,
+        "column": 9,
+        "start": 8,
+        "end": 14,
+        "in_watchlist": false,
+        "truth_name": "MILANO-ELABORA"
+      }
+    ],
+    "direct_person_cue": false
+  },
+  {
+    "id": "C00291",
+    "line": 306,
+    "category": "identifier-user-id",
+    "line_type": "plain-code",
+    "text": "USER-FERRO1",
+    "expected_entity": "NAME",
+    "expected_route": "G4",
+    "expected_outcome": "review_required",
+    "why": "possible name is inside a code-sensitive program identifier",
+    "truth_entity": "NAME",
+    "truth_names": [
+      {
+        "text": "FERRO",
+        "line": 306,
+        "column": 19,
+        "start": 18,
+        "end": 23,
+        "in_watchlist": true,
+        "truth_name": "USER-FERRO1"
+      }
+    ],
+    "direct_person_cue": false
+  },
+  {
+    "id": "C00292",
+    "line": 307,
+    "category": "identifier-user-id",
+    "line_type": "plain-code",
+    "text": "USER-NERI2",
+    "expected_entity": "NAME",
+    "expected_route": "G4",
+    "expected_outcome": "review_required",
+    "why": "possible name is inside a code-sensitive program identifier",
+    "truth_entity": "NAME",
+    "truth_names": [
+      {
+        "text": "NERI",
+        "line": 307,
+        "column": 19,
+        "start": 18,
+        "end": 22,
+        "in_watchlist": true,
+        "truth_name": "USER-NERI2"
+      }
+    ],
+    "direct_person_cue": false
+  },
+  {
+    "id": "C00293",
+    "line": 308,
+    "category": "identifier-user-id",
+    "line_type": "plain-code",
+    "text": "USER-SALA3",
+    "expected_entity": "NAME",
+    "expected_route": "G4",
+    "expected_outcome": "review_required",
+    "why": "possible name is inside a code-sensitive program identifier",
+    "truth_entity": "NAME",
+    "truth_names": [
+      {
+        "text": "SALA",
+        "line": 308,
+        "column": 19,
+        "start": 18,
+        "end": 22,
+        "in_watchlist": true,
+        "truth_name": "USER-SALA3"
+      }
+    ],
+    "direct_person_cue": false
+  },
+  {
+    "id": "C00294",
+    "line": 309,
+    "category": "identifier-user-id",
+    "line_type": "plain-code",
+    "text": "USER-ROSA4",
+    "expected_entity": "NAME",
+    "expected_route": "G4",
+    "expected_outcome": "review_required",
+    "why": "possible name is inside a code-sensitive program identifier",
+    "truth_entity": "NAME",
+    "truth_names": [
+      {
+        "text": "ROSA",
+        "line": 309,
+        "column": 19,
+        "start": 18,
+        "end": 22,
+        "in_watchlist": true,
+        "truth_name": "USER-ROSA4"
+      }
+    ],
+    "direct_person_cue": false
+  },
+  {
+    "id": "C00295",
+    "line": 310,
+    "category": "identifier-user-id",
+    "line_type": "plain-code",
+    "text": "USER-COSTA5",
+    "expected_entity": "NAME",
+    "expected_route": "G4",
+    "expected_outcome": "review_required",
+    "why": "possible name is inside a code-sensitive program identifier",
+    "truth_entity": "NAME",
+    "truth_names": [
+      {
+        "text": "COSTA",
+        "line": 310,
+        "column": 19,
+        "start": 18,
+        "end": 23,
+        "in_watchlist": true,
+        "truth_name": "USER-COSTA5"
+      }
+    ],
+    "direct_person_cue": false
+  },
+  {
+    "id": "C00296",
+    "line": 311,
+    "category": "identifier-user-id",
+    "line_type": "plain-code",
+    "text": "USER-RIVA6",
+    "expected_entity": "NAME",
+    "expected_route": "G4",
+    "expected_outcome": "review_required",
+    "why": "possible name is inside a code-sensitive program identifier",
+    "truth_entity": "NAME",
+    "truth_names": [
+      {
+        "text": "RIVA",
+        "line": 311,
+        "column": 19,
+        "start": 18,
+        "end": 22,
+        "in_watchlist": true,
+        "truth_name": "USER-RIVA6"
+      }
+    ],
+    "direct_person_cue": false
+  },
+  {
+    "id": "C00297",
+    "line": 312,
+    "category": "identifier-user-id",
+    "line_type": "plain-code",
+    "text": "USER-FIORE7",
+    "expected_entity": "NAME",
+    "expected_route": "G4",
+    "expected_outcome": "review_required",
+    "why": "possible name is inside a code-sensitive program identifier",
+    "truth_entity": "NAME",
+    "truth_names": [
+      {
+        "text": "FIORE",
+        "line": 312,
+        "column": 19,
+        "start": 18,
+        "end": 23,
+        "in_watchlist": true,
+        "truth_name": "USER-FIORE7"
+      }
+    ],
+    "direct_person_cue": false
+  },
+  {
+    "id": "C00298",
+    "line": 313,
+    "category": "identifier-user-id",
+    "line_type": "plain-code",
+    "text": "USER-LEONE8",
+    "expected_entity": "NAME",
+    "expected_route": "G4",
+    "expected_outcome": "review_required",
+    "why": "possible name is inside a code-sensitive program identifier",
+    "truth_entity": "NAME",
+    "truth_names": [
+      {
+        "text": "LEONE",
+        "line": 313,
+        "column": 19,
+        "start": 18,
+        "end": 23,
+        "in_watchlist": true,
+        "truth_name": "USER-LEONE8"
+      }
+    ],
+    "direct_person_cue": false
+  },
+  {
+    "id": "C00299",
+    "line": 314,
+    "category": "identifier-user-id",
+    "line_type": "plain-code",
+    "text": "USER-APRILE9",
+    "expected_entity": "NAME",
+    "expected_route": "G4",
+    "expected_outcome": "review_required",
+    "why": "possible name is inside a code-sensitive program identifier",
+    "truth_entity": "NAME",
+    "truth_names": [
+      {
+        "text": "APRILE",
+        "line": 314,
+        "column": 19,
+        "start": 18,
+        "end": 24,
+        "in_watchlist": false,
+        "truth_name": "USER-APRILE9"
+      }
+    ],
+    "direct_person_cue": false
+  },
+  {
+    "id": "C00300",
+    "line": 315,
+    "category": "identifier-user-id",
+    "line_type": "plain-code",
+    "text": "USER-MILANO10",
+    "expected_entity": "NAME",
+    "expected_route": "G4",
+    "expected_outcome": "review_required",
+    "why": "possible name is inside a code-sensitive program identifier",
+    "truth_entity": "NAME",
+    "truth_names": [
+      {
+        "text": "MILANO",
+        "line": 315,
+        "column": 19,
+        "start": 18,
+        "end": 24,
+        "in_watchlist": false,
+        "truth_name": "USER-MILANO10"
+      }
+    ],
+    "direct_person_cue": false
+  }
+]
