@@ -284,16 +284,23 @@ def review_code_identifiers(examples, judge, verifier, report_path, answers, ver
         gate = apply_name_policy(occurrence_id=occurrence_id, model_context=context, judge_decision=None,
                                  code_sensitive_identifier=False, review_answer=answer)
         judged = verified = None
+        failed = False
         if verifier_enabled and gate.reading == NAME_POLICY_TABLE["no_judge"][1]:
             first = entries[0]
             candidate = scanner.Finding(first["file"], "NAME", identifier, 0, len(identifier), first["line"], 1, 1, context)
             # Preserve the exact spelling highlighted in the first example.
             candidate = replace(candidate, text=context.split("[[", 1)[1].split("]]", 1)[0])
-            judged, _ = judge.decide(candidate, context, occurrence_id, code_identifier=True)
-            if judged.outcome == "propose_unchanged" and verifier is not None:
-                verified = verifier.verify(occurrence_id=occurrence_id, candidate=candidate.text,
-                                            context=context, code_identifier=True)
-        failed = (occurrence_id in getattr(judge, "transport_failures", ()) or
+            stage = "judge"
+            try:
+                judged, _ = judge.decide(candidate, context, occurrence_id, code_identifier=True)
+                if judged.outcome == "propose_unchanged" and verifier is not None:
+                    stage = "verifier"
+                    verified = verifier.verify(occurrence_id=occurrence_id, candidate=candidate.text,
+                                                context=context, code_identifier=True)
+            except Exception as exc:
+                _record_runtime_failure(judge, candidate, stage, exc)
+                failed = True
+        failed = (failed or occurrence_id in getattr(judge, "transport_failures", ()) or
                   occurrence_id in getattr(verifier, "transport_failures", ()))
         checks[identifier] = dict(judge=judged, verifier=verified, failed=failed, answer=answer)
         decision = apply_name_policy(occurrence_id=occurrence_id, model_context=context,
